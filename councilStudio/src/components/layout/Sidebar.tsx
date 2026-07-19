@@ -45,17 +45,20 @@ const BOTTOM_ITEMS: NavItem[] = [
 ];
 
 export function Sidebar() {
-  const { sidebarOpen, toggleSidebar, setSettingsOpen } = useAppStore(
+  const { sidebarOpen, toggleSidebar, setSettingsOpen, setApiKeysOpen } = useAppStore(
     useShallow((s) => ({
       sidebarOpen: s.ui.sidebarOpen,
       toggleSidebar: s.toggleSidebar,
       setSettingsOpen: s.setSettingsOpen,
+      setApiKeysOpen: s.setApiKeysOpen,
     }))
   );
 
   const handleNavClick = (id: string) => {
-    if (id === "settings" || id === "api-keys") {
+    if (id === "settings") {
       setSettingsOpen(true);
+    } else if (id === "api-keys") {
+      setApiKeysOpen(true);
     }
   };
 

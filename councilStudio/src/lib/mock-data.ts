@@ -32,8 +32,8 @@ export const SEED_PERSONAS: Persona[] = [
   {
     id: "person-researcher",
     name: "Researcher",
-    provider: "google",
-    model: "gemini-2-pro",
+    provider: "openrouter",
+    model: "or-perplexity-sonar-pro",
     systemPrompt: "You are a research analyst. Ground responses in evidence. Cite sources. Present multiple perspectives. Distinguish fact from opinion.",
     temperature: 0.5,
     maxTokens: 8192,
@@ -46,8 +46,8 @@ export const SEED_PERSONAS: Persona[] = [
   {
     id: "person-critic",
     name: "Critic",
-    provider: "mistral",
-    model: "mistral-large",
+    provider: "ollama",
+    model: "ollama-qwen2.5-72b",
     systemPrompt: "You are a critical thinker. Challenge assumptions. Find flaws in reasoning. Identify risks and failure modes. Steel-man opposing views.",
     temperature: 0.6,
     maxTokens: 4096,
@@ -60,8 +60,8 @@ export const SEED_PERSONAS: Persona[] = [
   {
     id: "person-creative",
     name: "Creative",
-    provider: "meta",
-    model: "llama-3.3",
+    provider: "openrouter",
+    model: "or-llama-3.3-70b",
     systemPrompt: "You are a creative thinker. Generate unconventional ideas. Think laterally. Make unexpected connections. Use metaphors and analogies.",
     temperature: 0.9,
     maxTokens: 4096,
@@ -92,11 +92,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { id: "gpt-5.5-mini", name: "GPT-5.5 Mini", provider: "openai", contextWindow: 200000, costPer1kIn: 0.005, costPer1kOut: 0.015 },
   { id: "claude-opus-4", name: "Claude Opus 4", provider: "anthropic", contextWindow: 200000, costPer1kIn: 0.015, costPer1kOut: 0.075 },
   { id: "claude-sonnet-5", name: "Claude Sonnet 5", provider: "anthropic", contextWindow: 200000, costPer1kIn: 0.003, costPer1kOut: 0.015 },
-  { id: "gemini-2-pro", name: "Gemini 2 Pro", provider: "google", contextWindow: 2000000, costPer1kIn: 0.005, costPer1kOut: 0.025 },
-  { id: "gemini-2-flash", name: "Gemini 2 Flash", provider: "google", contextWindow: 1000000, costPer1kIn: 0.0001, costPer1kOut: 0.0004 },
-  { id: "mistral-large", name: "Mistral Large", provider: "mistral", contextWindow: 128000, costPer1kIn: 0.008, costPer1kOut: 0.024 },
-  { id: "llama-3.3", name: "Llama 3.3 70B", provider: "meta", contextWindow: 128000, costPer1kIn: 0.0004, costPer1kOut: 0.0004 },
-  { id: "llama-3.1-405b", name: "Llama 3.1 405B", provider: "meta", contextWindow: 128000, costPer1kIn: 0.003, costPer1kOut: 0.003 },
+  { id: "or-perplexity-sonar-pro", name: "Perplexity Sonar Pro", provider: "openrouter", contextWindow: 128000, costPer1kIn: 0.003, costPer1kOut: 0.015 },
+  { id: "or-llama-3.3-70b", name: "Llama 3.3 70B", provider: "openrouter", contextWindow: 128000, costPer1kIn: 0.0004, costPer1kOut: 0.0004 },
+  { id: "or-deepseek-r1", name: "DeepSeek R1", provider: "openrouter", contextWindow: 64000, costPer1kIn: 0.0005, costPer1kOut: 0.0022 },
+  { id: "ollama-llama3.1-70b", name: "Llama 3.1 70B", provider: "ollama", contextWindow: 128000, costPer1kIn: 0, costPer1kOut: 0 },
+  { id: "ollama-qwen2.5-72b", name: "Qwen 2.5 72B", provider: "ollama", contextWindow: 32000, costPer1kIn: 0, costPer1kOut: 0 },
+  { id: "ollama-mistral-7b", name: "Mistral 7B", provider: "ollama", contextWindow: 32000, costPer1kIn: 0, costPer1kOut: 0 },
 ];
 
 export const SAMPLE_PROMPTS: PromptTemplate[] = [

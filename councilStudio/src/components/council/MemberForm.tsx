@@ -30,10 +30,8 @@ import type { Persona, Provider } from "@/types";
 const PROVIDERS: { id: Provider; label: string }[] = [
   { id: "anthropic", label: "Anthropic" },
   { id: "openai", label: "OpenAI" },
-  { id: "google", label: "Google" },
-  { id: "mistral", label: "Mistral" },
-  { id: "meta", label: "Meta" },
   { id: "openrouter", label: "OpenRouter" },
+  { id: "ollama", label: "Ollama (Self-hosted)" },
 ];
 
 const AVATAR_COLORS = [

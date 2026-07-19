@@ -5,6 +5,7 @@ import { PromptEditor } from "@/components/prompt/PromptEditor";
 import { SessionList } from "@/components/sessions/SessionList";
 import { ResponsePanelDock } from "@/components/responses/ResponsePanelDock";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { ApiKeysPanel } from "@/components/settings/ApiKeysPanel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { motion } from "framer-motion";
 
@@ -66,6 +67,7 @@ export function Dashboard() {
       {/* Slide-over panels */}
       <MemberForm />
       <SettingsPanel />
+      <ApiKeysPanel />
     </>
   );
 }

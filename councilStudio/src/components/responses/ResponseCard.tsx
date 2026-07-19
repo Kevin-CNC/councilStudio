@@ -25,9 +25,7 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   openrouter: "OpenRouter",
-  google: "Google",
-  mistral: "Mistral",
-  meta: "Meta",
+  ollama: "Ollama",
 };
 
 interface ResponseCardProps {
