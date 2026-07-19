@@ -1,6 +1,6 @@
 export type Theme = "light" | "dark";
 
-export type Provider = "anthropic" | "openai" | "openrouter" | "google" | "mistral" | "meta";
+export type Provider = "anthropic" | "openai" | "openrouter" | "ollama";
 
 export type RunStatus = "queued" | "running" | "streaming" | "completed" | "partial" | "failed" | "cancelled";
 
