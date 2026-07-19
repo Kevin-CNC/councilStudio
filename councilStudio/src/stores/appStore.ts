@@ -9,6 +9,7 @@ interface UIState {
   rightPanelOpen: boolean;
   theme: Theme;
   settingsOpen: boolean;
+  apiKeysOpen: boolean;
   memberFormOpen: boolean;
   editingMemberId: string | null;
   activeTab: TabId;
@@ -59,6 +60,7 @@ interface AppState {
   toggleRightPanel: () => void;
   setTheme: (theme: Theme) => void;
   setSettingsOpen: (open: boolean) => void;
+  setApiKeysOpen: (open: boolean) => void;
   setMemberFormOpen: (open: boolean, editingId?: string | null) => void;
   setActiveTab: (tab: TabId) => void;
   setResponsePanelHeight: (height: number) => void;
@@ -83,6 +85,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     rightPanelOpen: false,
     theme: "light",
     settingsOpen: false,
+    apiKeysOpen: false,
     memberFormOpen: false,
     editingMemberId: null,
     activeTab: "overview",
@@ -242,6 +245,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSettingsOpen: (open) =>
     set((state) => ({ ui: { ...state.ui, settingsOpen: open } })),
+
+  setApiKeysOpen: (open) =>
+    set((state) => ({ ui: { ...state.ui, apiKeysOpen: open } })),
 
   setMemberFormOpen: (open, editingId = null) =>
     set((state) => ({
