@@ -6,28 +6,16 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
 import { Toggle } from "@/components/ui/toggle";
 import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
 import type { Theme } from "@/types";
-import {
-  Key,
-  Palette,
-  Keyboard,
-  Bell,
-  Download,
-  Upload,
-  Check,
-  Eye,
-  EyeOff,
-} from "lucide-react";
+import { Palette, Keyboard, Bell } from "lucide-react";
 
 export function SettingsPanel() {
   const { settingsOpen, setSettingsOpen, theme, setTheme } = useAppStore(
@@ -50,11 +38,8 @@ export function SettingsPanel() {
         </SheetHeader>
 
         <ScrollArea className="h-[calc(100vh-120px)] py-4">
-          <Tabs defaultValue="api-keys" className="w-full">
+          <Tabs defaultValue="appearance" className="w-full">
             <TabsList className="w-full justify-start bg-transparent border-b border-border p-0 h-auto gap-1">
-              <TabsTrigger value="api-keys" className="gap-1.5 text-xs px-3 py-2">
-                <Key className="h-3.5 w-3.5" /> API Keys
-              </TabsTrigger>
               <TabsTrigger value="appearance" className="gap-1.5 text-xs px-3 py-2">
                 <Palette className="h-3.5 w-3.5" /> Appearance
               </TabsTrigger>
@@ -66,9 +51,6 @@ export function SettingsPanel() {
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="api-keys" className="mt-4 space-y-4">
-              <ApiKeysSection />
-            </TabsContent>
             <TabsContent value="appearance" className="mt-4 space-y-4">
               <AppearanceSection theme={theme} setTheme={setTheme} />
             </TabsContent>
@@ -82,97 +64,6 @@ export function SettingsPanel() {
         </ScrollArea>
       </SheetContent>
     </Sheet>
-  );
-}
-
-function ApiKeysSection() {
-  const [keys, setKeys] = useState({
-    anthropic: "",
-    openai: "",
-    google: "",
-    mistral: "",
-  });
-  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [tested, setTested] = useState<Record<string, boolean>>({});
-
-  const providers = [
-    { id: "anthropic", name: "Anthropic", placeholder: "sk-ant-..." },
-    { id: "openai", name: "OpenAI", placeholder: "sk-..." },
-    { id: "google", name: "Google AI", placeholder: "AI..." },
-    { id: "mistral", name: "Mistral", placeholder: "..." },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <h4 className="text-sm font-semibold mb-1">API Keys</h4>
-        <p className="text-xs text-muted-foreground">
-          Keys are stored locally and never sent to our servers.
-        </p>
-      </div>
-
-      {providers.map((p) => (
-        <div key={p.id} className="space-y-2">
-          <Label>{p.name}</Label>
-          <div className="relative">
-            <Input
-              type={showKeys[p.id] ? "text" : "password"}
-              placeholder={p.placeholder}
-              value={keys[p.id as keyof typeof keys]}
-              onChange={(e) => setKeys({ ...keys, [p.id]: e.target.value })}
-              className="pr-20"
-            />
-            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => setShowKeys({ ...showKeys, [p.id]: !showKeys[p.id] })}
-              >
-                {showKeys[p.id] ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => setTested({ ...tested, [p.id]: true })}
-              >
-                {tested[p.id] ? (
-                  <Check className="h-3 w-3 text-primary" />
-                ) : (
-                  "Test"
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      ))}
-
-      <div className="pt-4 border-t border-border">
-        <h4 className="text-sm font-semibold mb-3">Council Presets</h4>
-        <div className="space-y-2">
-          {["Fast (2 models)", "Balanced (4 models)", "Deep Analysis (6 models)"].map((preset) => (
-            <div key={preset} className="flex items-center justify-between rounded-lg border border-border p-2">
-              <span className="text-sm">{preset}</span>
-              <Button variant="ghost" size="sm" className="h-7 text-xs">
-                Load
-              </Button>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex gap-2 mt-3">
-          <Button variant="outline" size="sm" className="gap-1.5">
-            <Download className="h-3.5 w-3.5" /> Export
-          </Button>
-          <Button variant="outline" size="sm" className="gap-1.5">
-            <Upload className="h-3.5 w-3.5" /> Import
-          </Button>
-        </div>
-      </div>
-
-      <Button className="w-full mt-4">Save All Keys</Button>
-    </div>
   );
 }
 
