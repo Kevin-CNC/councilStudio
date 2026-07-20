@@ -135,30 +135,61 @@ fn valid_uuid(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn valid_provider(provider: &str) -> Result<(), String> {
+    match provider {
+        "anthropic" | "openai" | "openrouter" | "ollama" => Ok(()),
+        _ => Err(format!(
+            "provider must be one of: anthropic, openai, openrouter, ollama; got {}",
+            provider
+        )),
+    }
+}
+
+fn valid_reasoning_level(level: &str) -> Result<(), String> {
+    match level {
+        "none" | "low" | "medium" | "high" => Ok(()),
+        _ => Err(format!(
+            "reasoning_level must be one of: none, low, medium, high; got {}",
+            level
+        )),
+    }
+}
+
+fn valid_hex_color(color: &str) -> Result<(), String> {
+    if !color.starts_with('#') || color.len() != 7 {
+        return Err("color must be a 6-digit hex color like #rrggbb".to_string());
+    }
+    let hex = &color[1..];
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("color must only contain hex digits after #".to_string());
+    }
+    Ok(())
+}
+
 fn validate_create(p: &PersonaCreate) -> Result<(), String> {
     if p.name.trim().is_empty() {
         return Err("name is required".to_string());
     }
+    if p.name.chars().count() > 100 {
+        return Err("name must be at most 100 characters".to_string());
+    }
     if p.provider.trim().is_empty() {
         return Err("provider is required".to_string());
     }
+    valid_provider(&p.provider)?;
     if p.model.trim().is_empty() {
         return Err("model is required".to_string());
     }
-    if p.sys_prompt.trim().is_empty() {
-        return Err("system_prompt is required".to_string());
+    if p.sys_prompt.chars().count() > 10_000 {
+        return Err("system_prompt must be at most 10,000 characters".to_string());
     }
-    if p.color.trim().is_empty() {
-        return Err("color is required".to_string());
-    }
-    if p.reasoning_level.trim().is_empty() {
-        return Err("reasoning_level is required".to_string());
-    }
+    valid_hex_color(&p.color)?;
+    valid_reasoning_level(&p.reasoning_level)?;
     if !(0.0..=2.0).contains(&p.temp) {
         return Err("temp must be between 0.0 and 2.0".to_string());
     }
-    if p.max_tokens < 1 {
-        return Err("max_tokens must be at least 1".to_string());
+    if !(1..=200_000).contains(&p.max_tokens) {
+        return Err("max_tokens must be between 1 and 200,000".to_string());
     }
     Ok(())
 }
@@ -168,11 +199,15 @@ fn validate_update(u: &PersonaUpdate) -> Result<(), String> {
         if v.trim().is_empty() {
             return Err("name cannot be empty".to_string());
         }
+        if v.chars().count() > 100 {
+            return Err("name must be at most 100 characters".to_string());
+        }
     }
     if let Some(v) = &u.provider {
         if v.trim().is_empty() {
             return Err("provider cannot be empty".to_string());
         }
+        valid_provider(v)?;
     }
     if let Some(v) = &u.model {
         if v.trim().is_empty() {
@@ -180,19 +215,15 @@ fn validate_update(u: &PersonaUpdate) -> Result<(), String> {
         }
     }
     if let Some(v) = &u.sys_prompt {
-        if v.trim().is_empty() {
-            return Err("system_prompt cannot be empty".to_string());
+        if v.chars().count() > 10_000 {
+            return Err("system_prompt must be at most 10,000 characters".to_string());
         }
     }
     if let Some(v) = &u.color {
-        if v.trim().is_empty() {
-            return Err("color cannot be empty".to_string());
-        }
+        valid_hex_color(v)?;
     }
     if let Some(v) = &u.reasoning_level {
-        if v.trim().is_empty() {
-            return Err("reasoning_level cannot be empty".to_string());
-        }
+        valid_reasoning_level(v)?;
     }
     if let Some(v) = u.temp {
         if !(0.0..=2.0).contains(&v) {
@@ -200,8 +231,8 @@ fn validate_update(u: &PersonaUpdate) -> Result<(), String> {
         }
     }
     if let Some(v) = u.max_tokens {
-        if v < 1 {
-            return Err("max_tokens must be at least 1".to_string());
+        if !(1..=200_000).contains(&v) {
+            return Err("max_tokens must be between 1 and 200,000".to_string());
         }
     }
     Ok(())
@@ -421,7 +452,7 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
             max_tokens: 4096,
             color: "#ef4444",
             sort_order: 2,
-            reasoning_level: "critical",
+            reasoning_level: "high",
             sys_prompt: "You are a skeptical reviewer. Attack assumptions, hunt for flaws, and expose risks others miss.",
         },
         SeedPersona {
@@ -432,7 +463,7 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
             max_tokens: 4096,
             color: "#8b5cf6",
             sort_order: 3,
-            reasoning_level: "creative",
+            reasoning_level: "medium",
             sys_prompt: "You are a visionary thinker. Reframe the problem and explore unconventional angles.",
         },
         SeedPersona {
@@ -443,7 +474,7 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
             max_tokens: 4096,
             color: "#10b981",
             sort_order: 4,
-            reasoning_level: "analytical",
+            reasoning_level: "medium",
             sys_prompt: "You are a deep technical specialist. Apply rigorous domain-specific depth to the topic.",
         },
     ];
