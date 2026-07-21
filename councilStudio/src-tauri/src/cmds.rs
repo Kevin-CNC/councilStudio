@@ -457,7 +457,7 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
         SeedPersona {
             name: "Pragmatist",
             provider: "anthropic",
-            model: "claude-sonnet-4",
+            model: "claude-sonnet-5",
             temp: 0.7,
             max_tokens: 4096,
             color: "#3b82f6",
@@ -490,7 +490,7 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
         SeedPersona {
             name: "Specialist",
             provider: "anthropic",
-            model: "claude-sonnet-4",
+            model: "claude-sonnet-5",
             temp: 0.7,
             max_tokens: 4096,
             color: "#10b981",
