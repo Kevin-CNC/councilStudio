@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {
   Sheet,
@@ -24,7 +24,6 @@ import { Toggle } from "@/components/ui/toggle";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
-import { MODEL_OPTIONS } from "@/lib/mock-data";
 import type { Provider } from "@/types";
 
 const PROVIDERS: { id: Provider; label: string }[] = [
@@ -34,12 +33,60 @@ const PROVIDERS: { id: Provider; label: string }[] = [
   { id: "ollama", label: "Ollama (Self-hosted)" },
 ];
 
-const DOC_URLS: Record<Provider, string> = {
-  anthropic: "https://platform.claude.com/docs/en/about-claude/models/overview",
-  openai: "https://developers.openai.com/api/docs/models/all",
-  openrouter: "https://openrouter.ai/models",
-  ollama: "https://ollama.com/library",
+const ANTHROPIC_MODELS = [
+  "claude-fable-5",
+  "claude-mythos-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-opus-4-5",
+  "claude-sonnet-5",
+  "claude-sonnet-4-6",
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5",
+];
+
+const OPENAI_MODELS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.4-nano",
+  "gpt-5.3-codex",
+  "gpt-5.2",
+  "gpt-5.2-pro",
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-4.1-nano",
+  "gpt-4o",
+  "gpt-4o-mini",
+];
+
+const VALID_MODELS: Record<string, string[]> = {
+  anthropic: ANTHROPIC_MODELS,
+  openai: OPENAI_MODELS,
 };
+
+const DEFAULT_MODELS: Record<Provider, string> = {
+  anthropic: "claude-sonnet-5",
+  openai: "gpt-5.5",
+  openrouter: "",
+  ollama: "",
+};
+
+function isValidModel(provider: Provider, model: string): boolean {
+  if (provider === "openrouter" || provider === "ollama") return true;
+  const list = VALID_MODELS[provider];
+  return list ? list.includes(model) : true;
+}
+
+function getModelHint(provider: Provider): string {
+  if (provider === "openrouter") return "Paste your OpenRouter model endpoint…";
+  if (provider === "ollama") return "e.g., llama3.1:latest, qwen2.5:72b";
+  return "Type or select a model…";
+}
 
 const AVATAR_COLORS = [
   "#17B890", "#228CDB", "#F59E0B", "#EF4444", "#8B5CF6",
@@ -64,13 +111,22 @@ export function MemberForm() {
 
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<Provider>("anthropic");
-  const [model, setModel] = useState("claude-opus-4");
+  const [model, setModel] = useState(DEFAULT_MODELS.anthropic);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(4096);
   const [reasoningLevel, setReasoningLevel] = useState<"none" | "low" | "medium" | "high">("medium");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [streaming, setStreaming] = useState(true);
   const [color, setColor] = useState(AVATAR_COLORS[0]);
+
+  const modelError = useMemo(() => {
+    if (!model.trim()) return null;
+    if (!isValidModel(provider, model)) {
+      const list = VALID_MODELS[provider];
+      return list ? `Unknown model. Valid: ${list.join(", ")}` : null;
+    }
+    return null;
+  }, [provider, model]);
 
   useEffect(() => {
     if (editingMember) {
@@ -86,7 +142,7 @@ export function MemberForm() {
     } else {
       setName("");
       setProvider("anthropic");
-      setModel("claude-opus-4");
+      setModel(DEFAULT_MODELS.anthropic);
       setTemperature(0.7);
       setMaxTokens(4096);
       setReasoningLevel("medium");
@@ -96,10 +152,10 @@ export function MemberForm() {
     }
   }, [editingMember, memberFormOpen]);
 
-  const filteredModels = MODEL_OPTIONS.filter((m) => m.provider === provider);
-
   const handleSave = async () => {
     if (!name.trim()) return;
+    if (!model.trim()) return;
+    if (modelError) return;
 
     try {
       if (isEditing && editingMember) {
@@ -166,8 +222,7 @@ export function MemberForm() {
                   value={provider}
                   onValueChange={(v) => {
                     setProvider(v as Provider);
-                    const models = MODEL_OPTIONS.filter((m) => m.provider === v);
-                    if (models.length) setModel(models[0].id);
+                    setModel(DEFAULT_MODELS[v as Provider]);
                   }}
                 >
                   <SelectTrigger>
@@ -185,45 +240,39 @@ export function MemberForm() {
 
               <div className="space-y-2">
                 <Label>Model</Label>
-                {provider === "ollama" ? (
+                {(provider === "anthropic" || provider === "openai") ? (
+                  <>
+                    <Input
+                      list={`${provider}-models`}
+                      placeholder={getModelHint(provider)}
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      className={modelError ? "border-red-500" : ""}
+                    />
+                    <datalist id={`${provider}-models`}>
+                      {(VALID_MODELS[provider] || []).map((m) => (
+                        <option key={m} value={m} />
+                      ))}
+                    </datalist>
+                  </>
+                ) : (
                   <Input
-                    placeholder="e.g., llama3.1:latest, qwen2.5:72b"
+                    placeholder={getModelHint(provider)}
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
                   />
-                ) : (
-                  <Select value={model} onValueChange={setModel}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {filteredModels.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 )}
-                {provider !== "ollama" ? (
-                  <a
-                    href={DOC_URLS[provider]}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
-                  >
-                    View available models →
-                  </a>
-                ) : (
-                  <a
-                    href={DOC_URLS.ollama}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
-                  >
-                    Browse Ollama models →
-                  </a>
+                {modelError && (
+                  <p className="text-xs text-red-500">{modelError}</p>
                 )}
+                <a
+                  href={provider === "ollama" ? "https://ollama.com/library" : provider === "openrouter" ? "https://openrouter.ai/models" : provider === "openai" ? "https://platform.openai.com/docs/models" : "https://docs.anthropic.com/en/docs/about-claude/models"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                >
+                  {provider === "openrouter" ? "Browse OpenRouter models →" : provider === "ollama" ? "Browse Ollama models →" : "View available models →"}
+                </a>
               </div>
             </div>
 
@@ -329,7 +378,7 @@ export function MemberForm() {
           <Button variant="outline" onClick={() => setMemberFormOpen(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!name.trim()}>
+          <Button onClick={handleSave} disabled={!name.trim() || !model.trim() || !!modelError}>
             {isEditing ? "Save Changes" : "Add Member"}
           </Button>
         </SheetFooter>
