@@ -25,7 +25,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
 import { MODEL_OPTIONS } from "@/lib/mock-data";
-import type { Persona, Provider } from "@/types";
+import type { Provider } from "@/types";
 
 const PROVIDERS: { id: Provider; label: string }[] = [
   { id: "anthropic", label: "Anthropic" },
@@ -33,6 +33,13 @@ const PROVIDERS: { id: Provider; label: string }[] = [
   { id: "openrouter", label: "OpenRouter" },
   { id: "ollama", label: "Ollama (Self-hosted)" },
 ];
+
+const DOC_URLS: Record<Provider, string> = {
+  anthropic: "https://platform.claude.com/docs/en/about-claude/models/overview",
+  openai: "https://developers.openai.com/api/docs/models/all",
+  openrouter: "https://openrouter.ai/models",
+  ollama: "https://ollama.com/library",
+};
 
 const AVATAR_COLORS = [
   "#17B890", "#228CDB", "#F59E0B", "#EF4444", "#8B5CF6",
@@ -91,40 +98,40 @@ export function MemberForm() {
 
   const filteredModels = MODEL_OPTIONS.filter((m) => m.provider === provider);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim()) return;
 
-    if (isEditing && editingMember) {
-      updateMember(editingMember.id, {
-        name,
-        provider,
-        model,
-        temperature,
-        maxTokens,
-        reasoningLevel,
-        systemPrompt,
-        streaming,
-        color,
-      });
-    } else {
-      const newMember: Persona = {
-        id: `person-${Date.now()}`,
-        name,
-        provider,
-        model,
-        systemPrompt,
-        temperature,
-        maxTokens,
-        enabled: true,
-        streaming,
-        color,
-        order: members.length,
-        reasoningLevel,
-      };
-      addMember(newMember);
+    try {
+      if (isEditing && editingMember) {
+        await updateMember(editingMember.id, {
+          name,
+          provider,
+          model,
+          temperature,
+          maxTokens,
+          reasoningLevel,
+          systemPrompt,
+          streaming,
+          color,
+        });
+      } else {
+        await addMember({
+          name,
+          provider,
+          model,
+          systemPrompt,
+          temperature,
+          maxTokens,
+          streaming,
+          color,
+          reasoningLevel,
+          enabled: true,
+        });
+      }
+      setMemberFormOpen(false);
+    } catch {
+      // Error is handled by the store (sets error state)
     }
-
-    setMemberFormOpen(false);
   };
 
   return (
@@ -178,18 +185,45 @@ export function MemberForm() {
 
               <div className="space-y-2">
                 <Label>Model</Label>
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {filteredModels.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {provider === "ollama" ? (
+                  <Input
+                    placeholder="e.g., llama3.1:latest, qwen2.5:72b"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  />
+                ) : (
+                  <Select value={model} onValueChange={setModel}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {filteredModels.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {provider !== "ollama" ? (
+                  <a
+                    href={DOC_URLS[provider]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                  >
+                    View available models →
+                  </a>
+                ) : (
+                  <a
+                    href={DOC_URLS.ollama}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                  >
+                    Browse Ollama models →
+                  </a>
+                )}
               </div>
             </div>
 
