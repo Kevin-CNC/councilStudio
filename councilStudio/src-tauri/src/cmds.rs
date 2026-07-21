@@ -6,55 +6,73 @@ use uuid::Uuid;
 
 /// A council member (also called persona or agent elsewhere). This is the public API shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Persona {
     pub id: String,
     pub name: String,
     pub provider: String,
     pub model: String,
+    #[serde(rename = "systemPrompt")]
     pub sys_prompt: String,
+    #[serde(rename = "temperature")]
     pub temp: f64,
+    #[serde(rename = "maxTokens")]
     pub max_tokens: i64,
     pub enabled: bool,
     pub streaming: bool,
     pub color: String,
+    #[serde(rename = "order")]
     pub sort_order: i32,
+    #[serde(rename = "reasoningLevel")]
     pub reasoning_level: String,
 }
 
 /// Input for creating a new member. The backend assigns the id and a default sort_order.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PersonaCreate {
     pub name: String,
     pub provider: String,
     pub model: String,
+    #[serde(rename = "systemPrompt")]
     pub sys_prompt: String,
+    #[serde(rename = "temperature")]
     pub temp: f64,
+    #[serde(rename = "maxTokens")]
     pub max_tokens: i64,
     pub enabled: bool,
     pub streaming: bool,
     pub color: String,
+    #[serde(rename = "reasoningLevel")]
     pub reasoning_level: String,
     pub sort_order: Option<i32>,
 }
 
 /// Input for partially updating a member. `None` means leave the current value.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PersonaUpdate {
     pub name: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
+    #[serde(rename = "systemPrompt")]
     pub sys_prompt: Option<String>,
+    #[serde(rename = "temperature")]
     pub temp: Option<f64>,
+    #[serde(rename = "maxTokens")]
     pub max_tokens: Option<i64>,
     pub enabled: Option<bool>,
     pub streaming: Option<bool>,
     pub color: Option<String>,
+    #[serde(rename = "order")]
     pub sort_order: Option<i32>,
+    #[serde(rename = "reasoningLevel")]
     pub reasoning_level: Option<String>,
 }
 
 /// Command wrapper for a partial update.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateMemberRequest {
     pub id: String,
     pub updates: PersonaUpdate,
@@ -62,14 +80,17 @@ pub struct UpdateMemberRequest {
 
 /// Command wrapper for a hard delete.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeleteMemberRequest {
     pub id: String,
 }
 
 /// One entry in a batch reorder request.
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ReorderItem {
     pub id: String,
+    #[serde(rename = "order")]
     pub sort_order: i32,
 }
 
@@ -441,7 +462,7 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
             max_tokens: 4096,
             color: "#3b82f6",
             sort_order: 1,
-            reasoning_level: "balanced",
+            reasoning_level: "medium",
             sys_prompt: "You are a pragmatic advisor. Focus on feasibility, second-order effects, and execution risk.",
         },
         SeedPersona {
