@@ -8,12 +8,32 @@ import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ApiKeysPanel } from "@/components/settings/ApiKeysPanel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { motion } from "framer-motion";
+import { Loader2 } from "lucide-react";
 
 export function Dashboard() {
   const isRunning = useAppStore((s) => s.isRunning);
+  const isLoading = useAppStore((s) => s.isLoading);
+  const members = useAppStore((s) => s.members);
+  const error = useAppStore((s) => s.error);
+
+  if (isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <span className="text-sm">Loading council members…</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
+      {error && (
+        <div className="mx-4 mt-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-400">
+          {error}
+        </div>
+      )}
       <div id="dashboard-root" className="flex h-full flex-col">
         {/* Top section: 3-column layout */}
         <ScrollArea id="dashboard-scroll-area" className="flex-1">
@@ -29,7 +49,7 @@ export function Dashboard() {
                 streamStates={
                   isRunning
                     ? Object.fromEntries(
-                        useAppStore.getState().members.map((m) => [m.id, { isStreaming: m.enabled }])
+                        members.map((m) => [m.id, { isStreaming: m.enabled }])
                       )
                     : undefined
                 }

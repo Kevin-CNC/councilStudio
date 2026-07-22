@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Persona, Session, CouncilRun, PromptTemplate, Theme } from "@/types";
-import { SEED_PERSONAS, SAMPLE_PROMPTS, createSampleSessions, createSampleRun } from "@/lib/mock-data";
+import * as bridge from "@/lib/tauri-bridge";
 
 type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
 
@@ -30,16 +30,21 @@ interface AppState {
   activeRun: CouncilRun | null;
   cancelledRunId: string | null;
 
+  // Loading / error
+  isLoading: boolean;
+  error: string | null;
+
   // UI
   ui: UIState;
 
   // Actions - Members
-  addMember: (member: Persona) => void;
-  updateMember: (id: string, updates: Partial<Persona>) => void;
-  deleteMember: (id: string) => void;
-  reorderMembers: (fromIndex: number, toIndex: number) => void;
-  duplicateMember: (id: string) => void;
-  toggleMemberEnabled: (id: string) => void;
+  loadMembers: () => Promise<void>;
+  addMember: (data: Omit<Persona, "id" | "order">) => Promise<void>;
+  updateMember: (id: string, updates: Partial<Persona>) => Promise<void>;
+  deleteMember: (id: string) => Promise<void>;
+  reorderMembers: (fromIndex: number, toIndex: number) => Promise<void>;
+  duplicateMember: (id: string) => Promise<void>;
+  toggleMemberEnabled: (id: string) => Promise<void>;
 
   // Actions - Prompt
   setPrompt: (prompt: string) => void;
@@ -68,16 +73,20 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  // Initial data
-  members: SEED_PERSONAS,
-  sessions: createSampleSessions(),
-  promptTemplates: SAMPLE_PROMPTS,
+  // Initial data — empty, loaded async from SQLite via Rust
+  members: [],
+  sessions: [],
+  promptTemplates: [],
   currentPrompt: "",
 
   // Run state
   isRunning: false,
   activeRun: null,
   cancelledRunId: null,
+
+  // Loading / error
+  isLoading: false,
+  error: null,
 
   // Initial UI state
   ui: {
@@ -94,101 +103,143 @@ export const useAppStore = create<AppState>((set, get) => ({
     responsePanelCollapsed: false,
   },
 
-  // Member actions
-  addMember: (member) =>
-    set((state) => ({
-      members: [...state.members, { ...member, order: state.members.length }],
-    })),
+  // --- Member actions (async, backed by SQLite via Tauri) ---
 
-  updateMember: (id, updates) =>
-    set((state) => ({
-      members: state.members.map((m) => (m.id === id ? { ...m, ...updates } : m)),
-    })),
+  loadMembers: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const members = await bridge.listMembers();
+      set({ members, isLoading: false });
+    } catch (e) {
+      set({ error: String(e), isLoading: false });
+    }
+  },
 
-  deleteMember: (id) =>
-    set((state) => ({
-      members: state.members.filter((m) => m.id !== id).map((m, i) => ({ ...m, order: i })),
-    })),
+  addMember: async (data) => {
+    set({ error: null });
+    try {
+      const created = await bridge.createMember({
+        name: data.name,
+        provider: data.provider,
+        model: data.model,
+        systemPrompt: data.systemPrompt,
+        temperature: data.temperature,
+        maxTokens: data.maxTokens,
+        enabled: data.enabled,
+        streaming: data.streaming,
+        color: data.color,
+        reasoningLevel: data.reasoningLevel || "medium",
+      });
+      set((state) => ({ members: [...state.members, created] }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
 
-  reorderMembers: (fromIndex, toIndex) =>
-    set((state) => {
-      const members = [...state.members];
-      const [moved] = members.splice(fromIndex, 1);
-      members.splice(toIndex, 0, moved);
-      return { members: members.map((m, i) => ({ ...m, order: i })) };
-    }),
+  updateMember: async (id, updates) => {
+    set({ error: null });
+    try {
+      const updated = await bridge.updateMember(id, {
+        name: updates.name,
+        provider: updates.provider,
+        model: updates.model,
+        systemPrompt: updates.systemPrompt,
+        temperature: updates.temperature,
+        maxTokens: updates.maxTokens,
+        enabled: updates.enabled,
+        streaming: updates.streaming,
+        color: updates.color,
+        reasoningLevel: updates.reasoningLevel,
+      });
+      set((state) => ({
+        members: state.members.map((m) => (m.id === id ? updated : m)),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
 
-  duplicateMember: (id) =>
-    set((state) => {
-      const member = state.members.find((m) => m.id === id);
-      if (!member) return state;
-      const newMember: Persona = {
-        ...member,
-        id: `person-${Date.now()}`,
-        name: `${member.name} (Copy)`,
-        order: state.members.length,
-      };
-      return { members: [...state.members, newMember] };
-    }),
+  deleteMember: async (id) => {
+    set({ error: null });
+    try {
+      await bridge.deleteMember(id);
+      set((state) => ({
+        members: state.members
+          .filter((m) => m.id !== id)
+          .map((m, i) => ({ ...m, order: i })),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
 
-  toggleMemberEnabled: (id) =>
-    set((state) => ({
-      members: state.members.map((m) =>
-        m.id === id ? { ...m, enabled: !m.enabled } : m
-      ),
-    })),
+  reorderMembers: async (fromIndex, toIndex) => {
+    const members = [...get().members];
+    const [moved] = members.splice(fromIndex, 1);
+    members.splice(toIndex, 0, moved);
+    const reordered = members.map((m, i) => ({ ...m, order: i }));
 
-  // Prompt actions
+    // Optimistic update
+    set({ members: reordered, error: null });
+
+    try {
+      await bridge.reorderMembers(
+        reordered.map((m) => ({ id: m.id, order: m.order }))
+      );
+    } catch (e) {
+      set({ error: String(e) });
+      // Reload from source of truth on failure
+      try {
+        const fresh = await bridge.listMembers();
+        set({ members: fresh });
+      } catch {
+        // best effort
+      }
+    }
+  },
+
+  duplicateMember: async (id) => {
+    const member = get().members.find((m) => m.id === id);
+    if (!member) return;
+    await get().addMember({
+      name: `${member.name} (Copy)`,
+      provider: member.provider,
+      model: member.model,
+      systemPrompt: member.systemPrompt,
+      temperature: member.temperature,
+      maxTokens: member.maxTokens,
+      streaming: member.streaming,
+      color: member.color,
+      reasoningLevel: member.reasoningLevel,
+      enabled: true,
+    });
+  },
+
+  toggleMemberEnabled: async (id) => {
+    const member = get().members.find((m) => m.id === id);
+    if (!member) return;
+    await get().updateMember(id, { enabled: !member.enabled });
+  },
+
+  // --- Prompt actions ---
+
   setPrompt: (prompt) => set({ currentPrompt: prompt }),
 
-  // Run actions
+  // --- Run actions ---
+
   runCouncil: () => {
-    const { currentPrompt, members, sessions } = get();
-    const enabledMembers = members.filter((m) => m.enabled);
-
-    if (!currentPrompt.trim() || enabledMembers.length === 0) {
-      throw new Error("No prompt or no enabled members");
-    }
-
-    const run = createSampleRun(currentPrompt);
-
-    // Create new session
-    const session: Session = {
-      id: `session-${Date.now()}`,
-      title: currentPrompt.slice(0, 60) + (currentPrompt.length > 60 ? "..." : ""),
-      prompt: currentPrompt,
-      configId: "default",
-      configName: "Balanced Council",
-      status: "completed",
-      personaCount: enabledMembers.length,
-      tokensUsed: run.personaResults.reduce((s, r) => s + r.tokensIn + r.tokensOut, 0),
-      totalCost: run.personaResults.reduce((s, r) => s + r.cost, 0),
-      durationMs: 6000,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      pinned: false,
-      tags: [],
-      run,
-    };
-
-    set({
-      isRunning: false,
-      activeRun: run,
-      sessions: [session, ...sessions].slice(0, 50), // Keep last 50 sessions
-      ui: { ...get().ui, activeTab: "responses", selectedSessionId: session.id },
-    });
-
-    return run;
+    throw new Error("Not implemented — orchestration coming in Phase 4");
   },
 
   cancelRun: () => {
-    set((state) => ({
-      isRunning: false,
-      cancelledRunId: state.activeRun?.id || null,
-    }));
+    set({ isRunning: false, cancelledRunId: get().activeRun?.id || null });
   },
 
-  // Session actions
+  // --- Session actions ---
+
   setSelectedSession: (id) =>
     set((state) => {
       if (!id) return { ui: { ...state.ui, selectedSessionId: null } };
@@ -231,7 +282,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  // UI actions
+  // --- UI actions ---
+
   toggleSidebar: () =>
     set((state) => ({ ui: { ...state.ui, sidebarOpen: !state.ui.sidebarOpen } })),
 

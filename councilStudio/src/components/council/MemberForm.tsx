@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import {
   Sheet,
@@ -24,8 +24,7 @@ import { Toggle } from "@/components/ui/toggle";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
-import { MODEL_OPTIONS } from "@/lib/mock-data";
-import type { Persona, Provider } from "@/types";
+import type { Provider } from "@/types";
 
 const PROVIDERS: { id: Provider; label: string }[] = [
   { id: "anthropic", label: "Anthropic" },
@@ -33,6 +32,61 @@ const PROVIDERS: { id: Provider; label: string }[] = [
   { id: "openrouter", label: "OpenRouter" },
   { id: "ollama", label: "Ollama (Self-hosted)" },
 ];
+
+const ANTHROPIC_MODELS = [
+  "claude-fable-5",
+  "claude-mythos-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-opus-4-6",
+  "claude-opus-4-5",
+  "claude-sonnet-5",
+  "claude-sonnet-4-6",
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5",
+];
+
+const OPENAI_MODELS = [
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.5",
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.4-nano",
+  "gpt-5.3-codex",
+  "gpt-5.2",
+  "gpt-5.2-pro",
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-4.1-nano",
+  "gpt-4o",
+  "gpt-4o-mini",
+];
+
+const VALID_MODELS: Record<string, string[]> = {
+  anthropic: ANTHROPIC_MODELS,
+  openai: OPENAI_MODELS,
+};
+
+const DEFAULT_MODELS: Record<Provider, string> = {
+  anthropic: "claude-sonnet-5",
+  openai: "gpt-5.5",
+  openrouter: "",
+  ollama: "",
+};
+
+function isValidModel(provider: Provider, model: string): boolean {
+  if (provider === "openrouter" || provider === "ollama") return true;
+  const list = VALID_MODELS[provider];
+  return list ? list.includes(model) : true;
+}
+
+function getModelHint(provider: Provider): string {
+  if (provider === "openrouter") return "Paste your OpenRouter model endpoint…";
+  if (provider === "ollama") return "e.g., llama3.1:latest, qwen2.5:72b";
+  return "Type or select a model…";
+}
 
 const AVATAR_COLORS = [
   "#17B890", "#228CDB", "#F59E0B", "#EF4444", "#8B5CF6",
@@ -57,13 +111,27 @@ export function MemberForm() {
 
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<Provider>("anthropic");
-  const [model, setModel] = useState("claude-opus-4");
+  const [model, setModel] = useState(DEFAULT_MODELS.anthropic);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(4096);
   const [reasoningLevel, setReasoningLevel] = useState<"none" | "low" | "medium" | "high">("medium");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [streaming, setStreaming] = useState(true);
   const [color, setColor] = useState(AVATAR_COLORS[0]);
+
+  const [confirming, setConfirming] = useState(false);
+  const [confirmBlocked, setConfirmBlocked] = useState(false);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const modelError = useMemo(() => {
+    if (!model.trim()) return null;
+    if (!isValidModel(provider, model)) {
+      const list = VALID_MODELS[provider];
+      return list ? `Unknown model. Valid: ${list.join(", ")}` : null;
+    }
+    return null;
+  }, [provider, model]);
 
   useEffect(() => {
     if (editingMember) {
@@ -79,7 +147,7 @@ export function MemberForm() {
     } else {
       setName("");
       setProvider("anthropic");
-      setModel("claude-opus-4");
+      setModel(DEFAULT_MODELS.anthropic);
       setTemperature(0.7);
       setMaxTokens(4096);
       setReasoningLevel("medium");
@@ -87,48 +155,89 @@ export function MemberForm() {
       setStreaming(true);
       setColor(AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]);
     }
+    setConfirming(false);
+    setConfirmBlocked(false);
   }, [editingMember, memberFormOpen]);
 
-  const filteredModels = MODEL_OPTIONS.filter((m) => m.provider === provider);
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      if (blockTimerRef.current) clearTimeout(blockTimerRef.current);
+    };
+  }, []);
 
-  const handleSave = () => {
-    if (!name.trim()) return;
+  const clearConfirmation = useCallback(() => {
+    setConfirming(false);
+    setConfirmBlocked(false);
+    if (resetTimerRef.current) { clearTimeout(resetTimerRef.current); resetTimerRef.current = null; }
+    if (blockTimerRef.current) { clearTimeout(blockTimerRef.current); blockTimerRef.current = null; }
+  }, []);
 
-    if (isEditing && editingMember) {
-      updateMember(editingMember.id, {
-        name,
-        provider,
-        model,
-        temperature,
-        maxTokens,
-        reasoningLevel,
-        systemPrompt,
-        streaming,
-        color,
-      });
-    } else {
-      const newMember: Persona = {
-        id: `person-${Date.now()}`,
-        name,
-        provider,
-        model,
-        systemPrompt,
-        temperature,
-        maxTokens,
-        enabled: true,
-        streaming,
-        color,
-        order: members.length,
-        reasoningLevel,
-      };
-      addMember(newMember);
+  const handleSaveClick = useCallback(() => {
+    if (!name.trim() || !model.trim() || modelError) return;
+
+    if (!confirming) {
+      // First click — enter confirmation mode
+      setConfirming(true);
+      setConfirmBlocked(true);
+
+      // 3s debounce before second click is allowed
+      blockTimerRef.current = setTimeout(() => {
+        setConfirmBlocked(false);
+        blockTimerRef.current = null;
+      }, 3000);
+
+      // 9s timeout — reset to normal if not confirmed
+      resetTimerRef.current = setTimeout(() => {
+        clearConfirmation();
+      }, 9000);
+      return;
     }
 
-    setMemberFormOpen(false);
+    if (confirmBlocked) return; // Still in 3s debounce window
+
+    // Second click — confirmed, execute save
+    clearConfirmation();
+    executeSave();
+  }, [name, model, modelError, confirming, confirmBlocked, clearConfirmation]);
+
+  const executeSave = async () => {
+    try {
+      if (isEditing && editingMember) {
+        await updateMember(editingMember.id, {
+          name,
+          provider,
+          model,
+          temperature,
+          maxTokens,
+          reasoningLevel,
+          systemPrompt,
+          streaming,
+          color,
+        });
+      } else {
+        await addMember({
+          name,
+          provider,
+          model,
+          systemPrompt,
+          temperature,
+          maxTokens,
+          streaming,
+          color,
+          reasoningLevel,
+          enabled: true,
+        });
+      }
+      setMemberFormOpen(false);
+    } catch {
+      // Error is handled by the store (sets error state)
+    }
   };
 
   return (
-    <Sheet open={memberFormOpen} onOpenChange={(open) => !open && setMemberFormOpen(false)}>
+    <Sheet open={memberFormOpen} onOpenChange={(open) => { if (!open) { clearConfirmation(); setMemberFormOpen(false); } }}>
       <SheetContent className="sm:max-w-md overflow-hidden">
         <SheetHeader>
           <SheetTitle>{isEditing ? "Edit Council Member" : "Add Council Member"}</SheetTitle>
@@ -159,8 +268,7 @@ export function MemberForm() {
                   value={provider}
                   onValueChange={(v) => {
                     setProvider(v as Provider);
-                    const models = MODEL_OPTIONS.filter((m) => m.provider === v);
-                    if (models.length) setModel(models[0].id);
+                    setModel(DEFAULT_MODELS[v as Provider]);
                   }}
                 >
                   <SelectTrigger>
@@ -178,18 +286,40 @@ export function MemberForm() {
 
               <div className="space-y-2">
                 <Label>Model</Label>
-                <Select value={model} onValueChange={setModel}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {filteredModels.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {(provider === "anthropic" || provider === "openai") ? (
+                  <Select
+                    value={model}
+                    onValueChange={(v) => setModel(v)}
+                  >
+                    <SelectTrigger className={modelError ? "border-red-500" : ""}>
+                      <SelectValue placeholder={getModelHint(provider)} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(VALID_MODELS[provider] || []).map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    placeholder={getModelHint(provider)}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  />
+                )}
+                {modelError && (
+                  <p className="text-xs text-red-500">{modelError}</p>
+                )}
+                <a
+                  href={provider === "ollama" ? "https://ollama.com/library" : provider === "openrouter" ? "https://openrouter.ai/models" : provider === "openai" ? "https://platform.openai.com/docs/models" : "https://docs.anthropic.com/en/docs/about-claude/models"}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground hover:text-primary underline-offset-2 hover:underline"
+                >
+                  {provider === "openrouter" ? "Browse OpenRouter models →" : provider === "ollama" ? "Browse Ollama models →" : "View available models →"}
+                </a>
               </div>
             </div>
 
@@ -292,11 +422,15 @@ export function MemberForm() {
         </ScrollArea>
 
         <SheetFooter className="gap-2 pt-4 border-t border-border">
-          <Button variant="outline" onClick={() => setMemberFormOpen(false)}>
+          <Button variant="outline" onClick={() => { clearConfirmation(); setMemberFormOpen(false); }}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!name.trim()}>
-            {isEditing ? "Save Changes" : "Add Member"}
+          <Button
+            onClick={handleSaveClick}
+            disabled={!name.trim() || !model.trim() || !!modelError || (confirming && confirmBlocked)}
+            className={confirming ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}
+          >
+            {confirming ? "Are you sure?" : isEditing ? "Save Changes" : "Add Member"}
           </Button>
         </SheetFooter>
       </SheetContent>

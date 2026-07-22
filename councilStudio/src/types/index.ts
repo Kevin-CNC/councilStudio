@@ -125,6 +125,34 @@ export interface AppNotification {
   createdAt: number;
 }
 
+// Payload for creating a new council member
+export interface PersonaCreate {
+  name: string;
+  provider: Provider;
+  model: string;
+  systemPrompt: string;
+  temperature: number;
+  maxTokens: number;
+  enabled: boolean;
+  streaming: boolean;
+  color: string;
+  reasoningLevel: "none" | "low" | "medium" | "high";
+}
+
+// Payload for partially updating an existing member
+export interface PersonaUpdate {
+  name?: string;
+  provider?: Provider;
+  model?: string;
+  systemPrompt?: string;
+  temperature?: number;
+  maxTokens?: number;
+  enabled?: boolean;
+  streaming?: boolean;
+  color?: string;
+  reasoningLevel?: "none" | "low" | "medium" | "high";
+}
+
 // Model metadata for dropdowns
 export interface ModelOption {
   id: string;
