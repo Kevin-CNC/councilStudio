@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import {
   Sheet,
@@ -119,6 +119,11 @@ export function MemberForm() {
   const [streaming, setStreaming] = useState(true);
   const [color, setColor] = useState(AVATAR_COLORS[0]);
 
+  const [confirming, setConfirming] = useState(false);
+  const [confirmBlocked, setConfirmBlocked] = useState(false);
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const modelError = useMemo(() => {
     if (!model.trim()) return null;
     if (!isValidModel(provider, model)) {
@@ -150,13 +155,54 @@ export function MemberForm() {
       setStreaming(true);
       setColor(AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]);
     }
+    setConfirming(false);
+    setConfirmBlocked(false);
   }, [editingMember, memberFormOpen]);
 
-  const handleSave = async () => {
-    if (!name.trim()) return;
-    if (!model.trim()) return;
-    if (modelError) return;
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      if (blockTimerRef.current) clearTimeout(blockTimerRef.current);
+    };
+  }, []);
 
+  const clearConfirmation = useCallback(() => {
+    setConfirming(false);
+    setConfirmBlocked(false);
+    if (resetTimerRef.current) { clearTimeout(resetTimerRef.current); resetTimerRef.current = null; }
+    if (blockTimerRef.current) { clearTimeout(blockTimerRef.current); blockTimerRef.current = null; }
+  }, []);
+
+  const handleSaveClick = useCallback(() => {
+    if (!name.trim() || !model.trim() || modelError) return;
+
+    if (!confirming) {
+      // First click — enter confirmation mode
+      setConfirming(true);
+      setConfirmBlocked(true);
+
+      // 3s debounce before second click is allowed
+      blockTimerRef.current = setTimeout(() => {
+        setConfirmBlocked(false);
+        blockTimerRef.current = null;
+      }, 3000);
+
+      // 9s timeout — reset to normal if not confirmed
+      resetTimerRef.current = setTimeout(() => {
+        clearConfirmation();
+      }, 9000);
+      return;
+    }
+
+    if (confirmBlocked) return; // Still in 3s debounce window
+
+    // Second click — confirmed, execute save
+    clearConfirmation();
+    executeSave();
+  }, [name, model, modelError, confirming, confirmBlocked, clearConfirmation]);
+
+  const executeSave = async () => {
     try {
       if (isEditing && editingMember) {
         await updateMember(editingMember.id, {
@@ -191,7 +237,7 @@ export function MemberForm() {
   };
 
   return (
-    <Sheet open={memberFormOpen} onOpenChange={(open) => !open && setMemberFormOpen(false)}>
+    <Sheet open={memberFormOpen} onOpenChange={(open) => { if (!open) { clearConfirmation(); setMemberFormOpen(false); } }}>
       <SheetContent className="sm:max-w-md overflow-hidden">
         <SheetHeader>
           <SheetTitle>{isEditing ? "Edit Council Member" : "Add Council Member"}</SheetTitle>
@@ -241,20 +287,21 @@ export function MemberForm() {
               <div className="space-y-2">
                 <Label>Model</Label>
                 {(provider === "anthropic" || provider === "openai") ? (
-                  <>
-                    <Input
-                      list={`${provider}-models`}
-                      placeholder={getModelHint(provider)}
-                      value={model}
-                      onChange={(e) => setModel(e.target.value)}
-                      className={modelError ? "border-red-500" : ""}
-                    />
-                    <datalist id={`${provider}-models`}>
+                  <Select
+                    value={model}
+                    onValueChange={(v) => setModel(v)}
+                  >
+                    <SelectTrigger className={modelError ? "border-red-500" : ""}>
+                      <SelectValue placeholder={getModelHint(provider)} />
+                    </SelectTrigger>
+                    <SelectContent>
                       {(VALID_MODELS[provider] || []).map((m) => (
-                        <option key={m} value={m} />
+                        <SelectItem key={m} value={m}>
+                          {m}
+                        </SelectItem>
                       ))}
-                    </datalist>
-                  </>
+                    </SelectContent>
+                  </Select>
                 ) : (
                   <Input
                     placeholder={getModelHint(provider)}
@@ -375,11 +422,15 @@ export function MemberForm() {
         </ScrollArea>
 
         <SheetFooter className="gap-2 pt-4 border-t border-border">
-          <Button variant="outline" onClick={() => setMemberFormOpen(false)}>
+          <Button variant="outline" onClick={() => { clearConfirmation(); setMemberFormOpen(false); }}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!name.trim() || !model.trim() || !!modelError}>
-            {isEditing ? "Save Changes" : "Add Member"}
+          <Button
+            onClick={handleSaveClick}
+            disabled={!name.trim() || !model.trim() || !!modelError || (confirming && confirmBlocked)}
+            className={confirming ? "bg-orange-500 hover:bg-orange-600 text-white" : ""}
+          >
+            {confirming ? "Are you sure?" : isEditing ? "Save Changes" : "Add Member"}
           </Button>
         </SheetFooter>
       </SheetContent>
