@@ -609,3 +609,45 @@ pub async fn run_council(
     )
     .await
 }
+
+
+/// Cancel a running council. MVP: emits a cancelled event; frontend ignores further results.
+#[tauri::command]
+pub async fn cancel_run(app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle
+        .emit("council-run-cancelled", ())
+        .map_err(|e| e.to_string())
+}
+
+/// Save an API key for a provider.
+#[tauri::command]
+pub fn save_api_key(
+    app_handle: tauri::AppHandle,
+    request: SaveApiKeyRequest,
+) -> Result<(), String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    crate::secrets::save_key(&app_data_dir, &request.provider, &request.key)
+}
+
+/// Return which providers have API keys configured.
+#[tauri::command]
+pub fn get_api_keys(app_handle: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let keys = crate::secrets::load_keys(&app_data_dir);
+    let result: Vec<serde_json::Value> = ["anthropic", "openai", "openrouter", "ollama"]
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "provider": p,
+                "hasKey": keys.contains_key(*p)
+            })
+        })
+        .collect();
+    Ok(result)
+}
