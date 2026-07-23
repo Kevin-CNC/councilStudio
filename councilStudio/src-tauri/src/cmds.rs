@@ -70,6 +70,60 @@ pub struct PersonaUpdate {
     pub reasoning_level: Option<String>,
 }
 
+// Result struct for a response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonaResult {
+    pub persona_id: String,
+    pub persona_name: String,
+    pub provider: String,
+    pub model: String,
+    pub status: String,
+    pub content: String,
+    pub error: Option<String>,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub latency_ms: u64,
+    pub cost: f64,
+    pub started_at: u64,
+    pub completed_at: Option<u64>,
+}
+
+
+/// Structured synthesis from the judge persona.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgeResult {
+    pub summary: String,
+    pub consensus: Vec<String>,
+    pub disagreements: Vec<String>,
+    pub minority_views: Vec<String>,
+    pub recommendations: Vec<String>,
+    pub confidence_score: u32,
+    pub synthesis: String,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub latency_ms: u64,
+}
+
+
+/// Input for the run_council command.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunCouncilRequest {
+    pub prompt: String,
+    pub judge_model: String,
+    pub judge_provider: String,
+}
+
+/// Input for saving an API key.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveApiKeyRequest {
+    pub provider: String,
+    pub key: String,
+}
+
 /// Command wrapper for a partial update.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -526,4 +580,32 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
     }
 
     list_personas(&conn)
+}
+
+
+/// Run the council: execute all enabled personas in parallel, then synthesize with a judge.
+#[tauri::command]
+pub async fn run_council(
+    state: tauri::State<'_, DbState>,
+    app_handle: tauri::AppHandle,
+    request: RunCouncilRequest,
+) -> Result<(), String> {
+    let personas = {
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        list_personas(&conn)?
+    };
+
+    let enabled: Vec<Persona> = personas.into_iter().filter(|p| p.enabled).collect();
+    if enabled.is_empty() {
+        return Err("No enabled council members".to_string());
+    }
+
+    crate::orchestrator::run_council(
+        &app_handle,
+        &request.prompt,
+        &enabled,
+        &request.judge_model,
+        &request.judge_provider,
+    )
+    .await
 }
