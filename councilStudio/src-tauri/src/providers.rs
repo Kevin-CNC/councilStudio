@@ -92,7 +92,7 @@ struct OllamaMessage {
 
 
 // Calc Costs for each provider
-fn calc_cost(provider: &str, model: &str, token_i: u64, token_o: u64) -> f64 {
+fn costCalc(provider: &str, model: &str, token_i: u64, token_o: u64) -> f64 {
     if provider == "anthropic" {
         if model.contains("sonnet"){
             return 0.0;
@@ -279,3 +279,53 @@ pub async fn makeCall(provider: &str, client: &reqwest::Client, api_k: &str, mod
 
 
 // Judge Call
+pub async fn judgeCall(client: &reqwest::Client, api_key: &str, provider: &str, model: &str, synthesis_prompt: &str, temperature: f64, max_tokens: i64, sys_prompt: Option<String> ) -> Result<JudgeResult, String> {
+    
+    if sys_prompt.is_none() {
+        let sys_prompt = "You are a council judge. Your job is to synthesize multiple AI persona responses into a structured evaluation. Always output valid JSON with the fields: summary, consensus, disagreements, minority_views, recommendations, confidence_score, synthesis. Never omit a field.";
+    }
+
+    let started_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    
+    // Build a persona result shaped response by calling the appropriate provider
+    let result = makeCall(provider, client, api_key, model, sys_prompt.unwrap_or_default().as_str(), synthesis_prompt, temperature, max_tokens as f64).await;
+
+    match result {
+        Ok(pr) => {
+            let completed_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+
+            // Try to parse JSON from the judge's response
+            match serde_json::from_str::<JudgeResult>(&pr.content) {
+                Ok(mut jr) => {
+                    jr.tokens_in = pr.tokens_in;
+                    jr.tokens_out = pr.tokens_out;
+                    jr.latency_ms = completed_at - started_at;
+                    Ok(jr)
+                }
+                Err(_) => {
+                    // Judge didn't return valid JSON; use raw content as synthesis
+                    Ok(JudgeResult {
+                        summary: "Judge response (unstructured)".to_string(),
+                        consensus: vec![],
+                        disagreements: vec![],
+                        minority_views: vec![],
+                        recommendations: vec![],
+                        confidence_score: 50,
+                        synthesis: pr.content,
+                        tokens_in: pr.tokens_in,
+                        tokens_out: pr.tokens_out,
+                        latency_ms: completed_at - started_at,
+                    })
+                }
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
