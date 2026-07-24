@@ -1,5 +1,15 @@
 import { create } from "zustand";
-import type { Persona, Session, CouncilRun, PromptTemplate, Theme } from "@/types";
+import { listen } from "@tauri-apps/api/event";
+import type {
+  Persona,
+  PersonaResult,
+  JudgeResult,
+  Session,
+  CouncilRun,
+  PromptTemplate,
+  Theme,
+  Provider,
+} from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
 
 type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
@@ -29,6 +39,8 @@ interface AppState {
   isRunning: boolean;
   activeRun: CouncilRun | null;
   cancelledRunId: string | null;
+  judgeModel: string;
+  judgeProvider: Provider;
 
   // Loading / error
   isLoading: boolean;
@@ -50,8 +62,9 @@ interface AppState {
   setPrompt: (prompt: string) => void;
 
   // Actions - Run
-  runCouncil: () => CouncilRun;
+  runCouncil: () => void;
   cancelRun: () => void;
+  setJudge: (model: string, provider: Provider) => void;
 
   // Actions - Sessions
   setSelectedSession: (id: string | null) => void;
@@ -83,6 +96,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   isRunning: false,
   activeRun: null,
   cancelledRunId: null,
+  judgeModel: "claude-sonnet-5",
+  judgeProvider: "anthropic",
 
   // Loading / error
   isLoading: false,
@@ -231,12 +246,52 @@ export const useAppStore = create<AppState>((set, get) => ({
   // --- Run actions ---
 
   runCouncil: () => {
-    throw new Error("Not implemented — orchestration coming in Phase 4");
+    const { currentPrompt, members, judgeModel, judgeProvider } = get();
+    if (
+      !currentPrompt.trim() ||
+      members.filter((m) => m.enabled).length === 0
+    ) {
+      return;
+    }
+
+    const activeRun: CouncilRun = {
+      id: crypto.randomUUID(),
+      configId: "default",
+      prompt: currentPrompt,
+      status: "running",
+      personaResults: [],
+      startedAt: Date.now(),
+    };
+
+    set({ isRunning: true, activeRun, error: null });
+
+    // Backend dispatches personas in parallel and streams results back as
+    // Tauri events (see listeners at the bottom of this file).
+    bridge.runCouncil(currentPrompt, judgeModel, judgeProvider).catch((err) => {
+      set((state) => ({
+        isRunning: false,
+        error: String(err),
+        activeRun: state.activeRun
+          ? { ...state.activeRun, status: "failed", completedAt: Date.now() }
+          : state.activeRun,
+      }));
+    });
   },
 
   cancelRun: () => {
-    set({ isRunning: false, cancelledRunId: get().activeRun?.id || null });
+    bridge.cancelRun().catch(() => {
+      // Best effort — local state is cancelled regardless
+    });
+    set((state) => ({
+      isRunning: false,
+      cancelledRunId: state.activeRun?.id || null,
+      activeRun: state.activeRun
+        ? { ...state.activeRun, status: "cancelled", completedAt: Date.now() }
+        : state.activeRun,
+    }));
   },
+
+  setJudge: (model, provider) => set({ judgeModel: model, judgeProvider: provider }),
 
   // --- Session actions ---
 
@@ -317,3 +372,82 @@ export const useAppStore = create<AppState>((set, get) => ({
       ui: { ...state.ui, responsePanelCollapsed: !state.ui.responsePanelCollapsed },
     })),
 }));
+
+// ---------------------------------------------------------------------------
+// Tauri event listeners — registered once at module load. The Rust backend
+// emits these during a council run (see orchestrator.rs).
+// ---------------------------------------------------------------------------
+
+listen<PersonaResult>("persona-result", (event) => {
+  const result = event.payload;
+  useAppStore.setState((state) => {
+    if (!state.activeRun) return state;
+    const others = state.activeRun.personaResults.filter(
+      (r) => r.personaId !== result.personaId
+    );
+    return {
+      activeRun: {
+        ...state.activeRun,
+        personaResults: [...others, result],
+        status: "streaming",
+      },
+    };
+  });
+});
+
+listen<JudgeResult>("judge-result", (event) => {
+  useAppStore.setState((state) => {
+    if (!state.activeRun) return state;
+    return {
+      activeRun: {
+        ...state.activeRun,
+        judgeResult: event.payload,
+      },
+    };
+  });
+});
+
+listen<{ runId: string }>("council-run-completed", () => {
+  useAppStore.setState((state) => {
+    if (!state.activeRun) return { isRunning: false };
+    const completedRun: CouncilRun = {
+      ...state.activeRun,
+      status: "completed",
+      completedAt: Date.now(),
+    };
+    const session: Session = {
+      id: completedRun.id,
+      title: completedRun.prompt.slice(0, 60),
+      prompt: completedRun.prompt,
+      configId: completedRun.configId,
+      configName: "Default",
+      status: "completed",
+      personaCount: completedRun.personaResults.length,
+      tokensUsed: completedRun.personaResults.reduce(
+        (s, r) => s + r.tokensIn + r.tokensOut,
+        0
+      ),
+      totalCost: completedRun.personaResults.reduce((s, r) => s + r.cost, 0),
+      durationMs: completedRun.completedAt! - completedRun.startedAt,
+      createdAt: completedRun.startedAt,
+      updatedAt: completedRun.completedAt!,
+      pinned: false,
+      tags: [],
+      run: completedRun,
+    };
+    return {
+      isRunning: false,
+      activeRun: completedRun,
+      sessions: [session, ...state.sessions],
+    };
+  });
+});
+
+listen("council-run-cancelled", () => {
+  useAppStore.setState((state) => ({
+    isRunning: false,
+    activeRun: state.activeRun
+      ? { ...state.activeRun, status: "cancelled", completedAt: Date.now() }
+      : state.activeRun,
+  }));
+});
