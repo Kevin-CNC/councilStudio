@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ResponseCard } from "./ResponseCard";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -15,16 +16,23 @@ import {
   Clock,
   BarChart3,
   MessageSquare,
+  Gavel,
+  Loader2,
 } from "lucide-react";
 
 export function ResponsePanel() {
-  const { activeRun, activeTab, setActiveTab } = useAppStore(
-    useShallow((s) => ({
-      activeRun: s.activeRun,
-      activeTab: s.ui.activeTab,
-      setActiveTab: s.setActiveTab,
-    }))
-  );
+  const { activeRun, activeTab, setActiveTab, isRunning, judgeStatus, personaStatuses, members } =
+    useAppStore(
+      useShallow((s) => ({
+        activeRun: s.activeRun,
+        activeTab: s.ui.activeTab,
+        setActiveTab: s.setActiveTab,
+        isRunning: s.isRunning,
+        judgeStatus: s.judgeStatus,
+        personaStatuses: s.personaStatuses,
+        members: s.members,
+      }))
+    );
 
   if (!activeRun) {
     return (
@@ -88,10 +96,27 @@ export function ResponsePanel() {
             transition={{ duration: 0.2 }}
             className="p-4"
           >
-            {activeTab === "overview" && <OverviewTab results={results} judgeResult={judgeResult} />}
-            {activeTab === "responses" && <ResponsesTab results={results} />}
-            {activeTab === "consensus" && <ConsensusTab judgeResult={judgeResult} />}
-            {activeTab === "differences" && <DifferencesTab judgeResult={judgeResult} />}
+            {activeTab === "overview" && (
+              <OverviewTab
+                results={results}
+                judgeResult={judgeResult}
+                isRunning={isRunning}
+                judgeStatus={judgeStatus}
+              />
+            )}
+            {activeTab === "responses" && (
+              <ResponsesTab
+                results={results}
+                members={members}
+                personaStatuses={personaStatuses}
+              />
+            )}
+            {activeTab === "consensus" && (
+              <ConsensusTab judgeResult={judgeResult} judgeStatus={judgeStatus} />
+            )}
+            {activeTab === "differences" && (
+              <DifferencesTab judgeResult={judgeResult} judgeStatus={judgeStatus} />
+            )}
             {activeTab === "sources" && <SourcesTab results={results} />}
             {activeTab === "timeline" && <TimelineTab results={results} />}
           </motion.div>
@@ -101,9 +126,48 @@ export function ResponsePanel() {
   );
 }
 
+// Shown while the run is in progress and no judge verdict exists yet.
+function JudgePendingCard({ isRunning, judgeStatus }: any) {
+  const judging = judgeStatus === "thinking";
+  return (
+    <Card>
+      <CardContent className="p-6">
+        <div className="flex items-center gap-3">
+          {judging ? (
+            <Gavel className="h-5 w-5 text-primary" />
+          ) : (
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          )}
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              {judging
+                ? "Judge is synthesizing…"
+                : isRunning
+                  ? "Council members are working…"
+                  : "No judge result"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {judging
+                ? "Consensus, disagreements and recommendations will appear here."
+                : "The judge runs after all members finish."}
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 space-y-2">
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-4/5" />
+          <Skeleton className="h-3 w-3/5" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // Overview Tab
-function OverviewTab({ results, judgeResult }: any) {
-  if (!judgeResult) return null;
+function OverviewTab({ results, judgeResult, isRunning, judgeStatus }: any) {
+  if (!judgeResult) {
+    return <JudgePendingCard isRunning={isRunning} judgeStatus={judgeStatus} />;
+  }
 
   return (
     <div className="space-y-4">
@@ -175,20 +239,54 @@ function OverviewTab({ results, judgeResult }: any) {
   );
 }
 
-// All Responses Tab
-function ResponsesTab({ results }: any) {
+// All Responses Tab — completed results plus skeleton cards for members
+// still queued or thinking.
+function ResponsesTab({ results, members, personaStatuses }: any) {
+  const resultIds = new Set(results.map((r: any) => r.personaId));
+  const pending = members.filter(
+    (m: any) =>
+      !resultIds.has(m.id) &&
+      (personaStatuses[m.id] === "waiting" || personaStatuses[m.id] === "thinking")
+  );
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {results.map((r: any, i: number) => (
         <ResponseCard key={r.personaId} result={r} index={i} color={r.provider === "anthropic" ? "#17B890" : "#228CDB"} />
+      ))}
+      {pending.map((m: any) => (
+        <Card key={m.id} className="overflow-hidden">
+          <CardHeader className="border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2.5">
+              <Skeleton className="h-8 w-8 rounded-full" />
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{m.name}</span>
+                  <span className="flex items-center gap-1 text-[10px] text-blue-600 dark:text-blue-400">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {personaStatuses[m.id] === "waiting" ? "Queued" : "Thinking…"}
+                  </span>
+                </div>
+                <span className="text-[10px] text-muted-foreground">{m.model}</span>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4 space-y-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-4/5" />
+            <Skeleton className="h-4 w-3/5" />
+          </CardContent>
+        </Card>
       ))}
     </div>
   );
 }
 
 // Consensus Tab
-function ConsensusTab({ judgeResult }: any) {
-  if (!judgeResult) return null;
+function ConsensusTab({ judgeResult, judgeStatus }: any) {
+  if (!judgeResult) {
+    return <JudgePendingCard isRunning judgeStatus={judgeStatus} />;
+  }
 
   return (
     <div className="space-y-4">
@@ -249,8 +347,10 @@ function ConsensusTab({ judgeResult }: any) {
 }
 
 // Differences Tab
-function DifferencesTab({ judgeResult }: any) {
-  if (!judgeResult) return null;
+function DifferencesTab({ judgeResult, judgeStatus }: any) {
+  if (!judgeResult) {
+    return <JudgePendingCard isRunning judgeStatus={judgeStatus} />;
+  }
 
   return (
     <div className="space-y-4">

@@ -13,6 +13,11 @@ import {
   Trash2,
   Eye,
   EyeOff,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  Ban,
 } from "lucide-react";
 import { useState } from "react";
 import {
@@ -21,7 +26,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { Persona, Provider } from "@/types";
+import type { Persona, Provider, MemberRunStatus } from "@/types";
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   anthropic: "Anthropic",
@@ -37,14 +42,45 @@ const PROVIDER_COLORS: Record<Provider, string> = {
   ollama: "bg-slate-100 text-slate-700 border-slate-200",
 };
 
+const RUN_STATUS_UI: Record<
+  MemberRunStatus,
+  { label: string; className: string; icon: React.ReactNode }
+> = {
+  waiting: {
+    label: "Queued",
+    className: "text-muted-foreground",
+    icon: <Clock className="h-3 w-3" />,
+  },
+  thinking: {
+    label: "Thinking…",
+    className: "text-blue-600 dark:text-blue-400",
+    icon: <Loader2 className="h-3 w-3 animate-spin" />,
+  },
+  completed: {
+    label: "Done",
+    className: "text-green-600 dark:text-green-400",
+    icon: <CheckCircle2 className="h-3 w-3" />,
+  },
+  failed: {
+    label: "Failed",
+    className: "text-destructive",
+    icon: <XCircle className="h-3 w-3" />,
+  },
+  cancelled: {
+    label: "Cancelled",
+    className: "text-muted-foreground",
+    icon: <Ban className="h-3 w-3" />,
+  },
+};
+
 interface MemberCardProps {
   persona: Persona;
   index: number;
-  isStreaming?: boolean;
+  runStatus?: MemberRunStatus;
   dragHandleProps?: any;
 }
 
-export function MemberCard({ persona, index, isStreaming, dragHandleProps }: MemberCardProps) {
+export function MemberCard({ persona, index, runStatus, dragHandleProps }: MemberCardProps) {
   const { setMemberFormOpen, deleteMember, duplicateMember, toggleMemberEnabled } = useAppStore();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -86,10 +122,15 @@ export function MemberCard({ persona, index, isStreaming, dragHandleProps }: Mem
                 <span className="text-sm font-semibold text-foreground truncate">
                   {persona.name}
                 </span>
-                {isStreaming && (
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                {runStatus && (
+                  <span
+                    className={cn(
+                      "flex items-center gap-1 text-[10px] font-medium",
+                      RUN_STATUS_UI[runStatus].className
+                    )}
+                  >
+                    {RUN_STATUS_UI[runStatus].icon}
+                    {RUN_STATUS_UI[runStatus].label}
                   </span>
                 )}
               </div>

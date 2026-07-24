@@ -5,12 +5,8 @@ import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Users } from "lucide-react";
 
-interface MemberListProps {
-  streamStates?: Record<string, { isStreaming: boolean }>;
-}
-
-export function MemberList({ streamStates }: MemberListProps) {
-  const { members, setMemberFormOpen } = useAppStore();
+export function MemberList() {
+  const { members, setMemberFormOpen, personaStatuses } = useAppStore();
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
@@ -76,7 +72,7 @@ export function MemberList({ streamStates }: MemberListProps) {
                   <MemberCard
                     persona={persona}
                     index={index}
-                    isStreaming={streamStates?.[persona.id]?.isStreaming}
+                    runStatus={personaStatuses[persona.id]}
                     dragHandleProps={{}}
                   />
                 </motion.div>

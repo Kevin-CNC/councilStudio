@@ -75,6 +75,18 @@ pub async fn run_council(
                 .unwrap_or_default()
                 .as_millis() as u64;
 
+            // Tell the frontend this member is now working.
+            app_handle
+                .emit(
+                    "persona-status",
+                    serde_json::json!({
+                        "personaId": persona.id,
+                        "personaName": persona.name,
+                        "status": "thinking"
+                    }),
+                )
+                .ok();
+
             // One call, any provider. A missing key comes back as Err and
             // becomes a failed PersonaResult below.
             let result = crate::providers::chat_completion(
@@ -135,6 +147,10 @@ pub async fn run_council(
     let synthesis_prompt = build_judge_prompt(prompt, &results);
 
     // 6. Call judge — same single method as personas, judge system prompt applied
+    app_handle
+        .emit("judge-status", serde_json::json!({ "status": "thinking" }))
+        .ok();
+
     let judge_result = crate::providers::judge_call(
         &client,
         ChatRequest {

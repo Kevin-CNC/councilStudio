@@ -9,6 +9,7 @@ import type {
   PromptTemplate,
   Theme,
   Provider,
+  MemberRunStatus,
 } from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
 
@@ -41,6 +42,10 @@ interface AppState {
   cancelledRunId: string | null;
   judgeModel: string;
   judgeProvider: Provider;
+  /** Live per-member progress, keyed by member id. */
+  personaStatuses: Record<string, MemberRunStatus>;
+  /** Judge lifecycle: idle until the backend says it's synthesizing. */
+  judgeStatus: "idle" | "thinking";
 
   // Loading / error
   isLoading: boolean;
@@ -98,6 +103,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   cancelledRunId: null,
   judgeModel: "claude-sonnet-5",
   judgeProvider: "anthropic",
+  personaStatuses: {},
+  judgeStatus: "idle",
 
   // Loading / error
   isLoading: false,
@@ -263,7 +270,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       startedAt: Date.now(),
     };
 
-    set({ isRunning: true, activeRun, error: null });
+    // Seed per-member statuses so the UI shows every enabled member as queued
+    const personaStatuses: Record<string, MemberRunStatus> = {};
+    for (const m of members) {
+      if (m.enabled) personaStatuses[m.id] = "waiting";
+    }
+
+    set({
+      isRunning: true,
+      activeRun,
+      error: null,
+      personaStatuses,
+      judgeStatus: "idle",
+    });
 
     // Backend dispatches personas in parallel and streams results back as
     // Tauri events (see listeners at the bottom of this file).
@@ -282,13 +301,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     bridge.cancelRun().catch(() => {
       // Best effort — local state is cancelled regardless
     });
-    set((state) => ({
-      isRunning: false,
-      cancelledRunId: state.activeRun?.id || null,
-      activeRun: state.activeRun
-        ? { ...state.activeRun, status: "cancelled", completedAt: Date.now() }
-        : state.activeRun,
-    }));
+    set((state) => {
+      const personaStatuses = { ...state.personaStatuses };
+      for (const id of Object.keys(personaStatuses)) {
+        if (personaStatuses[id] === "waiting" || personaStatuses[id] === "thinking") {
+          personaStatuses[id] = "cancelled";
+        }
+      }
+      return {
+        isRunning: false,
+        cancelledRunId: state.activeRun?.id || null,
+        judgeStatus: "idle",
+        personaStatuses,
+        activeRun: state.activeRun
+          ? { ...state.activeRun, status: "cancelled", completedAt: Date.now() }
+          : state.activeRun,
+      };
+    });
   },
 
   setJudge: (model, provider) => set({ judgeModel: model, judgeProvider: provider }),
@@ -378,6 +407,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 // emits these during a council run (see orchestrator.rs).
 // ---------------------------------------------------------------------------
 
+listen<{ personaId: string; status: MemberRunStatus }>(
+  "persona-status",
+  (event) => {
+    const { personaId, status } = event.payload;
+    useAppStore.setState((state) => ({
+      personaStatuses: { ...state.personaStatuses, [personaId]: status },
+    }));
+  }
+);
+
 listen<PersonaResult>("persona-result", (event) => {
   const result = event.payload;
   useAppStore.setState((state) => {
@@ -391,7 +430,17 @@ listen<PersonaResult>("persona-result", (event) => {
         personaResults: [...others, result],
         status: "streaming",
       },
+      personaStatuses: {
+        ...state.personaStatuses,
+        [result.personaId]: result.status === "failed" ? "failed" : "completed",
+      },
     };
+  });
+});
+
+listen<{ status: string }>("judge-status", (event) => {
+  useAppStore.setState({
+    judgeStatus: event.payload.status === "thinking" ? "thinking" : "idle",
   });
 });
 
@@ -399,6 +448,7 @@ listen<JudgeResult>("judge-result", (event) => {
   useAppStore.setState((state) => {
     if (!state.activeRun) return state;
     return {
+      judgeStatus: "idle",
       activeRun: {
         ...state.activeRun,
         judgeResult: event.payload,

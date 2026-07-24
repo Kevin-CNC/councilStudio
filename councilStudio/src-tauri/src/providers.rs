@@ -188,6 +188,37 @@ pub async fn chat_completion(
 
 const JUDGE_SYSTEM_PROMPT: &str = "You are a council judge. Your job is to synthesize multiple AI persona responses into a structured evaluation. Always output valid JSON with the fields: summary, consensus, disagreements, minority_views, recommendations, confidence_score, synthesis. Never omit a field.";
 
+/// Tolerant wire shape for the judge's JSON verdict. The judge model emits
+/// snake_case keys and no token/latency fields, so this is kept separate from
+/// the camelCase `JudgeResult` sent to the frontend. Every field defaults so
+/// a partial response still parses.
+#[derive(Deserialize, Default)]
+struct JudgeVerdict {
+    #[serde(default, alias = "summary")]
+    summary: String,
+    #[serde(default, alias = "consensus")]
+    consensus: Vec<String>,
+    #[serde(default, alias = "disagreements")]
+    disagreements: Vec<String>,
+    #[serde(default, alias = "minorityViews")]
+    minority_views: Vec<String>,
+    #[serde(default, alias = "recommendations")]
+    recommendations: Vec<String>,
+    #[serde(default, alias = "confidenceScore")]
+    confidence_score: f64,
+    #[serde(default, alias = "synthesis")]
+    synthesis: String,
+}
+
+/// Extract the first {...} block — judges often add prose around the JSON.
+fn extract_json_object(s: &str) -> &str {
+    let cleaned = strip_code_fences(s);
+    match (cleaned.find('{'), cleaned.rfind('}')) {
+        (Some(start), Some(end)) if end > start => &cleaned[start..=end],
+        _ => cleaned,
+    }
+}
+
 /// Judge call — provider-independent like `chat_completion`, with the judge
 /// system prompt applied and the response parsed into a JudgeResult.
 pub async fn judge_call(
@@ -208,15 +239,21 @@ pub async fn judge_call(
     let completed_at = now_millis();
     let latency_ms = completed_at - started_at;
 
-    // Judges often wrap JSON in code fences — strip before parsing.
-    let cleaned = strip_code_fences(&result.content);
-    match serde_json::from_str::<JudgeResult>(cleaned) {
-        Ok(mut jr) => {
-            jr.tokens_in = result.tokens_in;
-            jr.tokens_out = result.tokens_out;
-            jr.latency_ms = latency_ms;
-            Ok(jr)
-        }
+    // Judges wrap JSON in code fences or prose — extract the object first.
+    let json_str = extract_json_object(&result.content);
+    match serde_json::from_str::<JudgeVerdict>(json_str) {
+        Ok(v) => Ok(JudgeResult {
+            summary: v.summary,
+            consensus: v.consensus,
+            disagreements: v.disagreements,
+            minority_views: v.minority_views,
+            recommendations: v.recommendations,
+            confidence_score: v.confidence_score.round().clamp(0.0, 100.0) as u32,
+            synthesis: v.synthesis,
+            tokens_in: result.tokens_in,
+            tokens_out: result.tokens_out,
+            latency_ms,
+        }),
         Err(_) => {
             // Judge didn't return valid JSON; keep raw content as synthesis.
             Ok(JudgeResult {
