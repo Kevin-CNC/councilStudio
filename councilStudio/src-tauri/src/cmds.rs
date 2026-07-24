@@ -1,7 +1,7 @@
 use crate::db::DbState;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 
 /// A council member (also called persona or agent elsewhere). This is the public API shape.
@@ -643,9 +643,15 @@ pub fn get_api_keys(app_handle: tauri::AppHandle) -> Result<Vec<serde_json::Valu
     let result: Vec<serde_json::Value> = ["anthropic", "openai", "openrouter", "ollama"]
         .iter()
         .map(|p| {
+            // Ollama needs no API key — its base URL is stored as "ollama_url".
+            let configured = if *p == "ollama" {
+                keys.contains_key("ollama_url")
+            } else {
+                keys.contains_key(*p)
+            };
             serde_json::json!({
                 "provider": p,
-                "hasKey": keys.contains_key(*p)
+                "hasKey": configured
             })
         })
         .collect();
