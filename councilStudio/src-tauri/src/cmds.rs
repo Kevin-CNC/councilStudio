@@ -1,7 +1,7 @@
 use crate::db::DbState;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 use uuid::Uuid;
 
 /// A council member (also called persona or agent elsewhere). This is the public API shape.
@@ -68,6 +68,60 @@ pub struct PersonaUpdate {
     pub sort_order: Option<i32>,
     #[serde(rename = "reasoningLevel")]
     pub reasoning_level: Option<String>,
+}
+
+// Result struct for a response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonaResult {
+    pub persona_id: String,
+    pub persona_name: String,
+    pub provider: String,
+    pub model: String,
+    pub status: String,
+    pub content: String,
+    pub error: Option<String>,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub latency_ms: u64,
+    pub cost: f64,
+    pub started_at: u64,
+    pub completed_at: Option<u64>,
+}
+
+
+/// Structured synthesis from the judge persona.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JudgeResult {
+    pub summary: String,
+    pub consensus: Vec<String>,
+    pub disagreements: Vec<String>,
+    pub minority_views: Vec<String>,
+    pub recommendations: Vec<String>,
+    pub confidence_score: u32,
+    pub synthesis: String,
+    pub tokens_in: u64,
+    pub tokens_out: u64,
+    pub latency_ms: u64,
+}
+
+
+/// Input for the run_council command.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunCouncilRequest {
+    pub prompt: String,
+    pub judge_model: String,
+    pub judge_provider: String,
+}
+
+/// Input for saving an API key.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveApiKeyRequest {
+    pub provider: String,
+    pub key: String,
 }
 
 /// Command wrapper for a partial update.
@@ -526,4 +580,80 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
     }
 
     list_personas(&conn)
+}
+
+
+/// Run the council: execute all enabled personas in parallel, then synthesize with a judge.
+#[tauri::command]
+pub async fn run_council(
+    state: tauri::State<'_, DbState>,
+    app_handle: tauri::AppHandle,
+    request: RunCouncilRequest,
+) -> Result<(), String> {
+    let personas = {
+        let conn = state.0.lock().map_err(|e| e.to_string())?;
+        list_personas(&conn)?
+    };
+
+    let enabled: Vec<Persona> = personas.into_iter().filter(|p| p.enabled).collect();
+    if enabled.is_empty() {
+        return Err("No enabled council members".to_string());
+    }
+
+    crate::orchestrator::run_council(
+        &app_handle,
+        &request.prompt,
+        &enabled,
+        &request.judge_model,
+        &request.judge_provider,
+    )
+    .await
+}
+
+
+/// Cancel a running council. MVP: emits a cancelled event; frontend ignores further results.
+#[tauri::command]
+pub async fn cancel_run(app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle
+        .emit("council-run-cancelled", ())
+        .map_err(|e| e.to_string())
+}
+
+/// Save an API key for a provider.
+#[tauri::command]
+pub fn save_api_key(
+    app_handle: tauri::AppHandle,
+    request: SaveApiKeyRequest,
+) -> Result<(), String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    crate::secrets::save_key(&app_data_dir, &request.provider, &request.key)
+}
+
+/// Return which providers have API keys configured.
+#[tauri::command]
+pub fn get_api_keys(app_handle: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let keys = crate::secrets::load_keys(&app_data_dir);
+    let result: Vec<serde_json::Value> = ["anthropic", "openai", "openrouter", "ollama"]
+        .iter()
+        .map(|p| {
+            // Ollama needs no API key — its base URL is stored as "ollama_url".
+            let configured = if *p == "ollama" {
+                keys.contains_key("ollama_url")
+            } else {
+                keys.contains_key(*p)
+            };
+            serde_json::json!({
+                "provider": p,
+                "hasKey": configured
+            })
+        })
+        .collect();
+    Ok(result)
 }

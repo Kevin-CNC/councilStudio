@@ -11,9 +11,7 @@ import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 
 export function Dashboard() {
-  const isRunning = useAppStore((s) => s.isRunning);
   const isLoading = useAppStore((s) => s.isLoading);
-  const members = useAppStore((s) => s.members);
   const error = useAppStore((s) => s.error);
 
   if (isLoading) {
@@ -45,15 +43,7 @@ export function Dashboard() {
               transition={{ duration: 0.3 }}
               className="order-2 xl:order-1"
             >
-              <MemberList
-                streamStates={
-                  isRunning
-                    ? Object.fromEntries(
-                        members.map((m) => [m.id, { isStreaming: m.enabled }])
-                      )
-                    : undefined
-                }
-              />
+              <MemberList />
             </motion.div>
 
             {/* Column 2: Prompt workspace */}

@@ -2,15 +2,24 @@ import { useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useAppStore } from "@/stores/appStore";
 import { PromptHistory } from "./PromptHistory";
 import { motion, AnimatePresence } from "framer-motion";
+import type { Provider } from "@/types";
 import {
   Play,
   Square,
   Paperclip,
   Mic,
   BookOpen,
+  Gavel,
 } from "lucide-react";
 
 const MAX_CHARS = 4000;
@@ -22,12 +31,27 @@ export function PromptEditor() {
     members,
     isRunning,
     runCouncil,
+    judgeModel,
+    judgeProvider,
+    setJudge,
   } = useAppStore();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const charCount = currentPrompt.length;
   const canSubmit = currentPrompt.trim().length > 0 && !isRunning;
   const enabledCount = members.filter((m) => m.enabled).length;
+
+  // Judge options: unique provider/model pairs from the council roster,
+  // always including the current selection so it stays selectable.
+  const judgeValue = `${judgeProvider}:${judgeModel}`;
+  const judgeOptions = Array.from(
+    new Map(
+      [
+        { provider: judgeProvider, model: judgeModel },
+        ...members.map((m) => ({ provider: m.provider, model: m.model })),
+      ].map((o) => [`${o.provider}:${o.model}`, o])
+    ).values()
+  );
 
   const handleRun = () => {
     if (!canSubmit) return;
@@ -94,6 +118,32 @@ export function PromptEditor() {
         </PromptHistory>
 
         <div className="flex-1" />
+
+        {/* Judge model selector */}
+        <Select
+          value={judgeValue}
+          onValueChange={(v) => {
+            const [provider, ...rest] = v.split(":");
+            setJudge(rest.join(":"), provider as Provider);
+          }}
+          disabled={isRunning}
+        >
+          <SelectTrigger className="h-8 w-auto gap-1.5 text-xs text-muted-foreground">
+            <Gavel className="h-3.5 w-3.5" />
+            <SelectValue placeholder="Judge model" />
+          </SelectTrigger>
+          <SelectContent>
+            {judgeOptions.map((o) => (
+              <SelectItem
+                key={`${o.provider}:${o.model}`}
+                value={`${o.provider}:${o.model}`}
+                className="text-xs"
+              >
+                {o.model} <span className="text-muted-foreground">({o.provider})</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         {/* Action buttons */}
         <AnimatePresence mode="wait">

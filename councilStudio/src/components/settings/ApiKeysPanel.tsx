@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -12,8 +12,9 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
+import * as bridge from "@/lib/tauri-bridge";
 import type { Provider } from "@/types";
-import { Eye, EyeOff, Check } from "lucide-react";
+import { Eye, EyeOff, Check, Loader2 } from "lucide-react";
 
 const KEY_PROVIDERS: { id: Provider; name: string; placeholder: string }[] = [
   { id: "anthropic", name: "Anthropic", placeholder: "sk-ant-..." },
@@ -42,7 +43,49 @@ export function ApiKeysPanel() {
   });
   const [baseUrl, setBaseUrl] = useState(OLLAMA_PROVIDER.placeholder);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [tested, setTested] = useState<Record<string, boolean>>({});
+  const [savedKeys, setSavedKeys] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Load which providers already have credentials when the panel opens.
+  useEffect(() => {
+    if (!apiKeysOpen) return;
+    bridge
+      .getApiKeys()
+      .then((rows) => {
+        const map: Record<string, boolean> = {};
+        for (const row of rows) map[row.provider] = row.hasKey;
+        setSavedKeys(map);
+      })
+      .catch(() => {
+        // Panel still works — indicators just stay off
+      });
+  }, [apiKeysOpen]);
+
+  const handleSaveAll = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      for (const p of KEY_PROVIDERS) {
+        const key = keys[p.id]?.trim();
+        if (key) {
+          await bridge.saveApiKey(p.id, key);
+          setSavedKeys((prev) => ({ ...prev, [p.id]: true }));
+        }
+      }
+      const url = baseUrl.trim();
+      if (url) {
+        await bridge.saveApiKey("ollama_url", url);
+        setSavedKeys((prev) => ({ ...prev, ollama: true }));
+      }
+      // Clear entered secrets from component state after persisting
+      setKeys({ anthropic: "", openai: "", openrouter: "" });
+    } catch (e) {
+      setSaveError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <Sheet open={apiKeysOpen} onOpenChange={(open) => setApiKeysOpen(open)}>
@@ -67,7 +110,12 @@ export function ApiKeysPanel() {
                     onChange={(e) => setKeys({ ...keys, [p.id]: e.target.value })}
                     className="pr-20"
                   />
-                  <div className="absolute right-1 top-1/2 -translate-y-1/2 flex gap-1">
+                  <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    {savedKeys[p.id] && (
+                      <span title="Key saved">
+                        <Check className="h-3.5 w-3.5 text-primary" />
+                      </span>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -75,14 +123,6 @@ export function ApiKeysPanel() {
                       onClick={() => setShowKeys({ ...showKeys, [p.id]: !showKeys[p.id] })}
                     >
                       {showKeys[p.id] ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      onClick={() => setTested({ ...tested, [p.id]: true })}
-                    >
-                      {tested[p.id] ? <Check className="h-3 w-3 text-primary" /> : "Test"}
                     </Button>
                   </div>
                 </div>
@@ -103,22 +143,28 @@ export function ApiKeysPanel() {
                   className="pr-16"
                 />
                 <div className="absolute right-1 top-1/2 -translate-y-1/2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-xs"
-                    onClick={() => setTested({ ...tested, ollama: true })}
-                  >
-                    {tested.ollama ? <Check className="h-3 w-3 text-primary" /> : "Test"}
-                  </Button>
+                  {savedKeys.ollama && (
+                    <span title="Base URL saved" className="pr-2">
+                      <Check className="h-3.5 w-3.5 text-primary" />
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
           </div>
         </ScrollArea>
 
-        <div className="border-t border-border pt-4">
-          <Button id="api-keys-save-all" className="w-full">
+        <div className="border-t border-border pt-4 space-y-2">
+          {saveError && (
+            <p className="text-xs text-destructive">{saveError}</p>
+          )}
+          <Button
+            id="api-keys-save-all"
+            className="w-full"
+            onClick={handleSaveAll}
+            disabled={saving}
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
             Save All Keys
           </Button>
         </div>

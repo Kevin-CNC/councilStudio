@@ -4,6 +4,9 @@ export type Provider = "anthropic" | "openai" | "openrouter" | "ollama";
 
 export type RunStatus = "queued" | "running" | "streaming" | "completed" | "partial" | "failed" | "cancelled";
 
+/** Live per-member progress during a council run. */
+export type MemberRunStatus = "waiting" | "thinking" | "completed" | "failed" | "cancelled";
+
 export interface Persona {
   id: string;
   name: string;
