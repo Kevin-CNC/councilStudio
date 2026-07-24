@@ -1,6 +1,12 @@
-use crate::cmds::{Persona, PersonaResult, JudgeResult};
-use tauri::Emitter;
+//! Council orchestration: run all enabled personas in parallel, then judge.
+//!
+//! Provider-independent: the orchestrator never branches on provider. It
+//! resolves credentials and hands a single `ChatRequest` to
+//! `providers::chat_completion` / `providers::judge_call`.
 
+use crate::cmds::{JudgeResult, Persona, PersonaResult};
+use crate::providers::ChatRequest;
+use tauri::{Emitter, Manager};
 
 fn build_judge_prompt(prompt: &str, results: &[PersonaResult]) -> String {
     let mut p = format!(
@@ -23,8 +29,7 @@ fn build_judge_prompt(prompt: &str, results: &[PersonaResult]) -> String {
     p
 }
 
-
-// Main method to run a council
+/// Main method to run a council.
 pub async fn run_council(
     app_handle: &tauri::AppHandle,
     prompt: &str,
@@ -62,110 +67,32 @@ pub async fn run_council(
         let prompt = prompt.to_string();
         let persona = persona.clone();
         let api_key = keys.get(&persona.provider).cloned();
-        let base_url = keys
-            .get(&format!("{}_url", &persona.provider))
-            .cloned();
+        let base_url = keys.get(&format!("{}_url", persona.provider)).cloned();
 
         let task = tokio::spawn(async move {
             let started_at = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_millis() as u64;
 
-            let result = match persona.provider.as_str() {
-                "anthropic" => {
-                    let key = match api_key {
-                        Some(k) => k,
-                        None => {
-                            return PersonaResult {
-                                persona_id: persona.id.clone(),
-                                persona_name: persona.name.clone(),
-                                provider: persona.provider.clone(),
-                                model: persona.model.clone(),
-                                status: "failed".to_string(),
-                                content: String::new(),
-                                error: Some("No Anthropic API key configured".to_string()),
-                                tokens_in: 0,
-                                tokens_out: 0,
-                                latency_ms: 0,
-                                cost: 0.0,
-                                started_at,
-                                completed_at: None,
-                            }
-                        }
-                    };
-                    crate::providers::call_anthropic(
-                        &client, &key, &persona.model, &persona.sys_prompt,
-                        &prompt, persona.temp, persona.max_tokens,
-                    )
-                    .await
-                }
-                "openai" => {
-                    let key = match api_key {
-                        Some(k) => k,
-                        None => {
-                            return PersonaResult {
-                                persona_id: persona.id.clone(),
-                                persona_name: persona.name.clone(),
-                                provider: persona.provider.clone(),
-                                model: persona.model.clone(),
-                                status: "failed".to_string(),
-                                content: String::new(),
-                                error: Some("No OpenAI API key configured".to_string()),
-                                tokens_in: 0,
-                                tokens_out: 0,
-                                latency_ms: 0,
-                                cost: 0.0,
-                                started_at,
-                                completed_at: None,
-                            }
-                        }
-                    };
-                    crate::providers::call_openai(
-                        &client, &key, &persona.model, &persona.sys_prompt,
-                        &prompt, persona.temp, persona.max_tokens,
-                    )
-                    .await
-                }
-                "openrouter" => {
-                    let key = match api_key {
-                        Some(k) => k,
-                        None => {
-                            return PersonaResult {
-                                persona_id: persona.id.clone(),
-                                persona_name: persona.name.clone(),
-                                provider: persona.provider.clone(),
-                                model: persona.model.clone(),
-                                status: "failed".to_string(),
-                                content: String::new(),
-                                error: Some("No OpenRouter API key configured".to_string()),
-                                tokens_in: 0,
-                                tokens_out: 0,
-                                latency_ms: 0,
-                                cost: 0.0,
-                                started_at,
-                                completed_at: None,
-                            }
-                        }
-                    };
-                    crate::providers::call_openrouter(
-                        &client, &key, &persona.model, &persona.sys_prompt,
-                        &prompt, persona.temp, persona.max_tokens,
-                    )
-                    .await
-                }
-                "ollama" => {
-                    let url = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
-                    crate::providers::call_ollama(
-                        &client, &url, &persona.model, &persona.sys_prompt,
-                        &prompt, persona.temp, persona.max_tokens,
-                    )
-                    .await
-                }
-                _ => Err(format!("Unknown provider: {}", persona.provider)),
-            };
+            // One call, any provider. A missing key comes back as Err and
+            // becomes a failed PersonaResult below.
+            let result = crate::providers::chat_completion(
+                &client,
+                ChatRequest {
+                    provider: &persona.provider,
+                    api_key: api_key.as_deref(),
+                    base_url: base_url.as_deref(),
+                    model: &persona.model,
+                    system_prompt: &persona.sys_prompt,
+                    user_prompt: &prompt,
+                    temperature: persona.temp,
+                    max_tokens: persona.max_tokens,
+                },
+            )
+            .await;
 
-            let mut persona_result = match result {
+            let persona_result = match result {
                 Ok(mut r) => {
                     r.persona_id = persona.id.clone();
                     r.persona_name = persona.name.clone();
@@ -188,7 +115,7 @@ pub async fn run_council(
                 },
             };
 
-            // Emit per-persona result
+            // Emit per-persona result (success or failure)
             app_handle.emit("persona-result", &persona_result).ok();
             persona_result
         });
@@ -199,40 +126,31 @@ pub async fn run_council(
     // 4. Wait for all to settle
     let mut results: Vec<PersonaResult> = Vec::new();
     for task in tasks {
-        match task.await {
-            Ok(result) => results.push(result),
-            Err(_) => {} // task panicked, skip
+        if let Ok(result) = task.await {
+            results.push(result);
         }
     }
 
     // 5. Build judge prompt
     let synthesis_prompt = build_judge_prompt(prompt, &results);
 
-    // 6. Call judge
-    let judge_api_key = keys.get(judge_provider).cloned();
-    let judge_result = match judge_api_key {
-        Some(key) => {
-            crate::providers::call_judge(
-                &client,
-                &key,
-                judge_provider,
-                judge_model,
-                &synthesis_prompt,
-                0.7,
-                4096,
-            )
-            .await
-        }
-        None => {
-            let started_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
-            Err::<JudgeResult, String>(format!(
-                "No API key configured for judge provider: {judge_provider}"
-            ))
-        }
-    };
+    // 6. Call judge — same single method as personas, judge system prompt applied
+    let judge_result = crate::providers::judge_call(
+        &client,
+        ChatRequest {
+            provider: judge_provider,
+            api_key: keys.get(judge_provider).map(String::as_str),
+            base_url: keys
+                .get(&format!("{judge_provider}_url"))
+                .map(String::as_str),
+            model: judge_model,
+            system_prompt: "", // overridden by judge_call
+            user_prompt: &synthesis_prompt,
+            temperature: 0.7,
+            max_tokens: 4096,
+        },
+    )
+    .await;
 
     let judge_result = match judge_result {
         Ok(r) => r,
