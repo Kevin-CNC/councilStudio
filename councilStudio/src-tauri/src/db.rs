@@ -39,5 +39,40 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     )
     .map_err(|e| format!("create table: {e}"))?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sessions (
+            id TEXT PRIMARY KEY NOT NULL,
+            title TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            config_id TEXT NOT NULL DEFAULT 'default',
+            config_name TEXT NOT NULL DEFAULT 'Default',
+            status TEXT NOT NULL DEFAULT 'completed',
+            persona_count INTEGER NOT NULL DEFAULT 0,
+            tokens_used INTEGER NOT NULL DEFAULT 0,
+            total_cost REAL NOT NULL DEFAULT 0.0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0,
+            tags TEXT NOT NULL DEFAULT '[]',
+            run_json TEXT NOT NULL
+        )",
+        (),
+    )
+    .map_err(|e| format!("create table: {e}"))?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS prompt_templates (
+            id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            prompt TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT 'general',
+            created_at INTEGER NOT NULL
+        )",
+        (),
+    )
+    .map_err(|e| format!("create table: {e}"))?;
+
     Ok(conn)
 }

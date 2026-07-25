@@ -1,5 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Persona, PersonaCreate, PersonaUpdate, Provider } from "@/types";
+import type {
+  Persona,
+  PersonaCreate,
+  PersonaUpdate,
+  Provider,
+  Session,
+  CouncilRun,
+  PromptTemplate,
+} from "@/types";
 
 /**
  * Create a new council member. The backend assigns a UUID id and sort order.
@@ -92,4 +100,152 @@ export async function getApiKeys(): Promise<
   { provider: Provider; hasKey: boolean }[]
 > {
   return invoke<{ provider: Provider; hasKey: boolean }[]>("get_api_keys");
+}
+
+// --- Sessions ---------------------------------------------------------------
+
+interface SessionSummaryDto {
+  id: string;
+  title: string;
+  prompt: string;
+  configId: string;
+  configName: string;
+  status: string;
+  personaCount: number;
+  tokensUsed: number;
+  totalCost: number;
+  durationMs: number;
+  createdAt: number;
+  updatedAt: number;
+  pinned: boolean;
+  tags: string[];
+}
+
+interface SessionRowDto extends SessionSummaryDto {
+  runJson: string;
+}
+
+function sessionFromRow(row: SessionRowDto): Session {
+  return {
+    id: row.id,
+    title: row.title,
+    prompt: row.prompt,
+    configId: row.configId,
+    configName: row.configName,
+    status: row.status as Session["status"],
+    personaCount: row.personaCount,
+    tokensUsed: row.tokensUsed,
+    totalCost: row.totalCost,
+    durationMs: row.durationMs,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    pinned: row.pinned,
+    tags: row.tags,
+    run: JSON.parse(row.runJson) as CouncilRun,
+  };
+}
+
+/**
+ * Persist a session (upsert by id). Called after a council run completes.
+ */
+export async function saveSession(session: Session): Promise<void> {
+  return invoke<void>("save_session", {
+    payload: {
+      id: session.id,
+      title: session.title,
+      prompt: session.prompt,
+      configId: session.configId,
+      configName: session.configName,
+      status: session.status,
+      personaCount: session.personaCount,
+      tokensUsed: session.tokensUsed,
+      totalCost: session.totalCost,
+      durationMs: session.durationMs,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      runJson: JSON.stringify(session.run),
+    },
+  });
+}
+
+/**
+ * List all sessions (without the full run payload), newest first.
+ */
+export async function listSessions(): Promise<
+  Omit<Session, "run">[]
+> {
+  const rows = await invoke<SessionSummaryDto[]>("list_sessions");
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    prompt: row.prompt,
+    configId: row.configId,
+    configName: row.configName,
+    status: row.status as Session["status"],
+    personaCount: row.personaCount,
+    tokensUsed: row.tokensUsed,
+    totalCost: row.totalCost,
+    durationMs: row.durationMs,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    pinned: row.pinned,
+    tags: row.tags,
+  }));
+}
+
+/**
+ * Fetch one session including its full CouncilRun.
+ */
+export async function getSession(id: string): Promise<Session> {
+  const row = await invoke<SessionRowDto>("get_session", { request: { id } });
+  return sessionFromRow(row);
+}
+
+/**
+ * Permanently delete a session by id.
+ */
+export async function deleteSession(id: string): Promise<void> {
+  return invoke<void>("delete_session", { request: { id } });
+}
+
+/**
+ * Toggle a session's pinned flag and return the updated session.
+ */
+export async function pinSession(id: string): Promise<Session> {
+  const row = await invoke<SessionRowDto>("pin_session", { request: { id } });
+  return sessionFromRow(row);
+}
+
+// --- Prompt templates --------------------------------------------------------
+
+/**
+ * Create or update a prompt template. Omit `id` to create a new one.
+ */
+export async function savePromptTemplate(
+  template: Omit<PromptTemplate, "id" | "createdAt"> & { id?: string }
+): Promise<PromptTemplate> {
+  return invoke<PromptTemplate>("save_prompt_template", {
+    payload: {
+      id: template.id ?? null,
+      name: template.name,
+      description: template.description,
+      prompt: template.prompt,
+      category: template.category,
+      createdAt: null,
+    },
+  });
+}
+
+/**
+ * List all prompt templates, newest first.
+ */
+export async function listPromptTemplates(): Promise<PromptTemplate[]> {
+  return invoke<PromptTemplate[]>("list_prompt_templates");
+}
+
+/**
+ * Permanently delete a prompt template by id.
+ */
+export async function deletePromptTemplate(id: string): Promise<void> {
+  return invoke<void>("delete_prompt_template", { request: { id } });
 }

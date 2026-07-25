@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
 import {
-  Home,
   Users,
   MessageSquare,
   History,
@@ -28,7 +27,6 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "home", label: "Home", icon: Home },
   { id: "council", label: "Council", icon: Users, badge: "6" },
   { id: "prompts", label: "Prompts", icon: MessageSquare },
   { id: "sessions", label: "Sessions", icon: History },
@@ -45,12 +43,14 @@ const BOTTOM_ITEMS: NavItem[] = [
 ];
 
 export function Sidebar() {
-  const { sidebarOpen, toggleSidebar, setSettingsOpen, setApiKeysOpen } = useAppStore(
+  const { sidebarOpen, currentView, toggleSidebar, setSettingsOpen, setApiKeysOpen, setCurrentView } = useAppStore(
     useShallow((s) => ({
       sidebarOpen: s.ui.sidebarOpen,
+      currentView: s.ui.currentView,
       toggleSidebar: s.toggleSidebar,
       setSettingsOpen: s.setSettingsOpen,
       setApiKeysOpen: s.setApiKeysOpen,
+      setCurrentView: s.setCurrentView,
     }))
   );
 
@@ -59,8 +59,15 @@ export function Sidebar() {
       setSettingsOpen(true);
     } else if (id === "api-keys") {
       setApiKeysOpen(true);
+    } else if (id === "home" || id === "council") {
+      setCurrentView("home");
+    } else if (id === "prompts" || id === "sessions") {
+      setCurrentView(id);
     }
   };
+
+  const isActive = (id: string) =>
+    id === currentView || (currentView === "home" && id === "council");
 
   return (
     <aside
@@ -91,6 +98,7 @@ export function Sidebar() {
               key={item.id}
               item={item}
               collapsed={!sidebarOpen}
+              active={isActive(item.id)}
               onClick={() => handleNavClick(item.id)}
             />
           ))}
@@ -110,6 +118,7 @@ export function Sidebar() {
               key={item.id}
               item={item}
               collapsed={!sidebarOpen}
+              active={isActive(item.id)}
               onClick={() => handleNavClick(item.id)}
             />
           ))}
@@ -145,10 +154,12 @@ export function Sidebar() {
 function SidebarNavItem({
   item,
   collapsed,
+  active,
   onClick,
 }: {
   item: NavItem;
   collapsed: boolean;
+  active?: boolean;
   onClick?: () => void;
 }) {
   return (
@@ -158,12 +169,12 @@ function SidebarNavItem({
       className={cn(
         "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
         "hover:bg-muted hover:text-foreground",
-        item.id === "council" && "bg-primary/10 text-primary hover:bg-primary/15",
+        active && "bg-primary/10 text-primary hover:bg-primary/15",
         collapsed && "justify-center px-0"
       )}
       title={collapsed ? item.label : undefined}
     >
-      <item.icon className={cn("h-4 w-4 shrink-0", item.id === "council" && "text-primary")} />
+      <item.icon className={cn("h-4 w-4 shrink-0", active && "text-primary")} />
       {!collapsed && (
         <>
           <span className="flex-1 truncate text-left">{item.label}</span>

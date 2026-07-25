@@ -148,6 +148,392 @@ pub struct ReorderItem {
     pub sort_order: i32,
 }
 
+// --- sessions & prompt templates --------------------------------------------
+
+/// Lightweight session row for list views — excludes `run_json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    pub config_id: String,
+    pub config_name: String,
+    pub status: String,
+    pub persona_count: i64,
+    pub tokens_used: i64,
+    pub total_cost: f64,
+    pub duration_ms: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub pinned: bool,
+    pub tags: Vec<String>,
+}
+
+/// Full session row, including the serialized `CouncilRun` JSON blob.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRow {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    pub config_id: String,
+    pub config_name: String,
+    pub status: String,
+    pub persona_count: i64,
+    pub tokens_used: i64,
+    pub total_cost: f64,
+    pub duration_ms: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub pinned: bool,
+    pub tags: Vec<String>,
+    pub run_json: String,
+}
+
+/// Input for `save_session` — an upsert keyed on `id`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCreate {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    pub config_id: String,
+    pub config_name: String,
+    pub status: String,
+    pub persona_count: i64,
+    pub tokens_used: i64,
+    pub total_cost: f64,
+    pub duration_ms: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub run_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptTemplateRow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub prompt: String,
+    pub category: String,
+    pub created_at: i64,
+}
+
+/// Input for `save_prompt_template`. `id: None` creates a new template;
+/// `id: Some(existing)` upserts it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptTemplateCreate {
+    pub id: Option<String>,
+    pub name: String,
+    pub description: String,
+    pub prompt: String,
+    pub category: String,
+    pub created_at: Option<i64>,
+}
+
+/// Shared `{ id }` request shape for get/delete/pin-by-id commands.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdRequest {
+    pub id: String,
+}
+
+fn session_summary_from_row(row: &rusqlite::Row) -> Result<SessionSummary, rusqlite::Error> {
+    let tags_json: String = row.get("tags")?;
+    Ok(SessionSummary {
+        id: row.get("id")?,
+        title: row.get("title")?,
+        prompt: row.get("prompt")?,
+        config_id: row.get("config_id")?,
+        config_name: row.get("config_name")?,
+        status: row.get("status")?,
+        persona_count: row.get("persona_count")?,
+        tokens_used: row.get("tokens_used")?,
+        total_cost: row.get("total_cost")?,
+        duration_ms: row.get("duration_ms")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+        pinned: row.get("pinned")?,
+        tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+    })
+}
+
+fn session_row_from_row(row: &rusqlite::Row) -> Result<SessionRow, rusqlite::Error> {
+    let tags_json: String = row.get("tags")?;
+    Ok(SessionRow {
+        id: row.get("id")?,
+        title: row.get("title")?,
+        prompt: row.get("prompt")?,
+        config_id: row.get("config_id")?,
+        config_name: row.get("config_name")?,
+        status: row.get("status")?,
+        persona_count: row.get("persona_count")?,
+        tokens_used: row.get("tokens_used")?,
+        total_cost: row.get("total_cost")?,
+        duration_ms: row.get("duration_ms")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+        pinned: row.get("pinned")?,
+        tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+        run_json: row.get("run_json")?,
+    })
+}
+
+fn prompt_template_from_row(row: &rusqlite::Row) -> Result<PromptTemplateRow, rusqlite::Error> {
+    Ok(PromptTemplateRow {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        description: row.get("description")?,
+        prompt: row.get("prompt")?,
+        category: row.get("category")?,
+        created_at: row.get("created_at")?,
+    })
+}
+
+/// Upsert a session (called by the frontend after a council run completes).
+#[tauri::command]
+pub fn save_session(state: State<DbState>, payload: SessionCreate) -> Result<(), String> {
+    valid_uuid(&payload.id)?;
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    conn.execute(
+        "INSERT INTO sessions
+            (id, title, prompt, config_id, config_name, status, persona_count,
+             tokens_used, total_cost, duration_ms, created_at, updated_at, run_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            prompt = excluded.prompt,
+            config_id = excluded.config_id,
+            config_name = excluded.config_name,
+            status = excluded.status,
+            persona_count = excluded.persona_count,
+            tokens_used = excluded.tokens_used,
+            total_cost = excluded.total_cost,
+            duration_ms = excluded.duration_ms,
+            updated_at = excluded.updated_at,
+            run_json = excluded.run_json",
+        params![
+            payload.id,
+            payload.title,
+            payload.prompt,
+            payload.config_id,
+            payload.config_name,
+            payload.status,
+            payload.persona_count,
+            payload.tokens_used,
+            payload.total_cost,
+            payload.duration_ms,
+            payload.created_at,
+            payload.updated_at,
+            payload.run_json,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Return all sessions (without `run_json`), newest first.
+#[tauri::command]
+pub fn list_sessions(state: State<DbState>) -> Result<Vec<SessionSummary>, String> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, title, prompt, config_id, config_name, status, persona_count,
+                    tokens_used, total_cost, duration_ms, created_at, updated_at, pinned, tags
+             FROM sessions
+             ORDER BY created_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], session_summary_from_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut sessions = Vec::new();
+    for row in rows {
+        sessions.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(sessions)
+}
+
+/// Return one session including its full `run_json`.
+#[tauri::command]
+pub fn get_session(state: State<DbState>, request: IdRequest) -> Result<SessionRow, String> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    conn.query_row(
+        "SELECT id, title, prompt, config_id, config_name, status, persona_count,
+                tokens_used, total_cost, duration_ms, created_at, updated_at, pinned, tags, run_json
+         FROM sessions
+         WHERE id = ?1",
+        [&request.id],
+        session_row_from_row,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Delete a session by id.
+#[tauri::command]
+pub fn delete_session(state: State<DbState>, request: IdRequest) -> Result<(), String> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let changed = conn
+        .execute("DELETE FROM sessions WHERE id = ?1", [&request.id])
+        .map_err(|e| e.to_string())?;
+
+    if changed == 0 {
+        return Err("session not found".to_string());
+    }
+    Ok(())
+}
+
+/// Toggle a session's pinned flag and return the updated row.
+#[tauri::command]
+pub fn pin_session(state: State<DbState>, request: IdRequest) -> Result<SessionRow, String> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let changed = conn
+        .execute(
+            "UPDATE sessions SET pinned = NOT pinned WHERE id = ?1",
+            [&request.id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if changed == 0 {
+        return Err("session not found".to_string());
+    }
+
+    conn.query_row(
+        "SELECT id, title, prompt, config_id, config_name, status, persona_count,
+                tokens_used, total_cost, duration_ms, created_at, updated_at, pinned, tags, run_json
+         FROM sessions
+         WHERE id = ?1",
+        [&request.id],
+        session_row_from_row,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Create or update a prompt template. `id: None` generates a new UUID.
+#[tauri::command]
+pub fn save_prompt_template(
+    state: State<DbState>,
+    payload: PromptTemplateCreate,
+) -> Result<PromptTemplateRow, String> {
+    if payload.name.trim().is_empty() {
+        return Err("name is required".to_string());
+    }
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let id = payload.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let created_at = payload.created_at.unwrap_or_else(now_ms);
+
+    conn.execute(
+        "INSERT INTO prompt_templates (id, name, description, prompt, category, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            description = excluded.description,
+            prompt = excluded.prompt,
+            category = excluded.category",
+        params![
+            id,
+            payload.name,
+            payload.description,
+            payload.prompt,
+            payload.category,
+            created_at,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.query_row(
+        "SELECT id, name, description, prompt, category, created_at
+         FROM prompt_templates WHERE id = ?1",
+        [&id],
+        prompt_template_from_row,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Return all prompt templates, newest first.
+#[tauri::command]
+pub fn list_prompt_templates(state: State<DbState>) -> Result<Vec<PromptTemplateRow>, String> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, description, prompt, category, created_at
+             FROM prompt_templates
+             ORDER BY created_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], prompt_template_from_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut templates = Vec::new();
+    for row in rows {
+        templates.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(templates)
+}
+
+/// Delete a prompt template by id.
+#[tauri::command]
+pub fn delete_prompt_template(state: State<DbState>, request: IdRequest) -> Result<(), String> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let changed = conn
+        .execute("DELETE FROM prompt_templates WHERE id = ?1", [&request.id])
+        .map_err(|e| e.to_string())?;
+
+    if changed == 0 {
+        return Err("template not found".to_string());
+    }
+    Ok(())
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 // --- row mapping -----------------------------------------------------------
 
 fn persona_from_row(row: &rusqlite::Row) -> Result<Persona, rusqlite::Error> {

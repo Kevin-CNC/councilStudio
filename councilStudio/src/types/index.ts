@@ -2,7 +2,7 @@ export type Theme = "light" | "dark";
 
 export type Provider = "anthropic" | "openai" | "openrouter" | "ollama";
 
-export type RunStatus = "queued" | "running" | "streaming" | "completed" | "partial" | "failed" | "cancelled";
+export type RunStatus = "queued" | "running" | "streaming" | "completed" | "partial" | "failed" | "cancelled" | "terminated";
 
 /** Live per-member progress during a council run. */
 export type MemberRunStatus = "waiting" | "thinking" | "completed" | "failed" | "cancelled";
@@ -107,7 +107,8 @@ export interface Session {
   updatedAt: number;
   pinned: boolean;
   tags: string[];
-  run: CouncilRun;
+  /** Full run detail. Omitted from list views — fetched lazily on selection. */
+  run?: CouncilRun;
 }
 
 export interface PromptTemplate {

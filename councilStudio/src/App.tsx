@@ -7,6 +7,8 @@ import { seedDefaultMembers } from "@/lib/tauri-bridge";
 
 function App() {
   const loadMembers = useAppStore((s) => s.loadMembers);
+  const loadSessions = useAppStore((s) => s.loadSessions);
+  const loadPromptTemplates = useAppStore((s) => s.loadPromptTemplates);
 
   useEffect(() => {
     async function init() {
@@ -20,9 +22,10 @@ function App() {
           // DB already seeded or error — handled by store
         }
       }
+      await Promise.all([loadSessions(), loadPromptTemplates()]);
     }
     init();
-  }, [loadMembers]);
+  }, [loadMembers, loadSessions, loadPromptTemplates]);
 
   return (
     <TooltipProvider>
