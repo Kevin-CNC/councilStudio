@@ -182,16 +182,16 @@ export function MemberForm() {
       setConfirming(true);
       setConfirmBlocked(true);
 
-      // 3s debounce before second click is allowed
+      // 1.5s debounce before second click is allowed
       blockTimerRef.current = setTimeout(() => {
         setConfirmBlocked(false);
         blockTimerRef.current = null;
-      }, 3000);
+      }, 1500);
 
-      // 9s timeout — reset to normal if not confirmed
+      // 5s timeout — reset to normal if not confirmed
       resetTimerRef.current = setTimeout(() => {
         clearConfirmation();
-      }, 9000);
+      }, 5000);
       return;
     }
 
