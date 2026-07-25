@@ -607,10 +607,40 @@ listen<{ runId: string }>("council-run-completed", () => {
 });
 
 listen("council-run-cancelled", () => {
-  useAppStore.setState((state) => ({
-    isRunning: false,
-    activeRun: state.activeRun
-      ? { ...state.activeRun, status: "cancelled", completedAt: Date.now() }
-      : state.activeRun,
-  }));
+  useAppStore.setState((state) => {
+    if (!state.activeRun) return { isRunning: false };
+    const terminatedRun: CouncilRun = {
+      ...state.activeRun,
+      status: "terminated",
+      completedAt: Date.now(),
+    };
+    const session: Session = {
+      id: terminatedRun.id,
+      title: terminatedRun.prompt.slice(0, 60),
+      prompt: terminatedRun.prompt,
+      configId: terminatedRun.configId,
+      configName: "Default",
+      status: "terminated",
+      personaCount: terminatedRun.personaResults.length,
+      tokensUsed: terminatedRun.personaResults.reduce(
+        (s, r) => s + r.tokensIn + r.tokensOut,
+        0
+      ),
+      totalCost: terminatedRun.personaResults.reduce((s, r) => s + r.cost, 0),
+      durationMs: terminatedRun.completedAt! - terminatedRun.startedAt,
+      createdAt: terminatedRun.startedAt,
+      updatedAt: terminatedRun.completedAt!,
+      pinned: false,
+      tags: [],
+      run: terminatedRun,
+    };
+    bridge.saveSession(session).catch((e) => {
+      useAppStore.setState({ error: String(e) });
+    });
+    return {
+      isRunning: false,
+      activeRun: terminatedRun,
+      sessions: [session, ...state.sessions],
+    };
+  });
 });

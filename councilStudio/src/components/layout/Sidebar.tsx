@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
 import {
-  Home,
   Users,
   MessageSquare,
   History,
@@ -28,7 +27,6 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "home", label: "Home", icon: Home },
   { id: "council", label: "Council", icon: Users, badge: "6" },
   { id: "prompts", label: "Prompts", icon: MessageSquare },
   { id: "sessions", label: "Sessions", icon: History },

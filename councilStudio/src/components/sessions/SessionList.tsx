@@ -34,6 +34,7 @@ const STATUS_STYLES: Record<RunStatus, string> = {
   partial: "bg-yellow-100 text-yellow-700",
   failed: "bg-red-100 text-red-700",
   cancelled: "bg-muted text-muted-foreground",
+  terminated: "bg-red-100 text-red-700",
 };
 
 export function SessionList() {
@@ -109,6 +110,7 @@ export function SessionList() {
             <SelectItem value="completed">Completed</SelectItem>
             <SelectItem value="partial">Partial</SelectItem>
             <SelectItem value="failed">Failed</SelectItem>
+            <SelectItem value="terminated">Terminated</SelectItem>
           </SelectContent>
         </Select>
       </div>
