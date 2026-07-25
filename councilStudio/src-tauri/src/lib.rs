@@ -6,8 +6,10 @@ mod providers;
 mod orchestrator;
 
 use cmds::{
-    cancel_run, create_member, delete_member, get_api_keys, list_members, reorder_members,
-    run_council, save_api_key, seed_default_members, update_member,
+    cancel_run, create_member, delete_member, delete_prompt_template, delete_session,
+    get_api_keys, get_session, list_members, list_prompt_templates, list_sessions, pin_session,
+    reorder_members, run_council, save_api_key, save_prompt_template, save_session,
+    seed_default_members, update_member,
 };
 use std::sync::Mutex;
 use tauri::Manager;
@@ -39,6 +41,14 @@ pub fn run() {
             cancel_run,
             save_api_key,
             get_api_keys,
+            save_session,
+            list_sessions,
+            get_session,
+            delete_session,
+            pin_session,
+            save_prompt_template,
+            list_prompt_templates,
+            delete_prompt_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
