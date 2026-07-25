@@ -195,7 +195,7 @@ export function MemberForm() {
       return;
     }
 
-    if (confirmBlocked) return; // Still in 3s debounce window
+    if (confirmBlocked) return; // Still in 1.5s debounce window
 
     // Second click — confirmed, execute save
     clearConfirmation();

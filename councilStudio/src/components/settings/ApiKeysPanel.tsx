@@ -93,7 +93,7 @@ export function ApiKeysPanel() {
         <SheetHeader>
           <SheetTitle>API Keys</SheetTitle>
           <SheetDescription>
-            Keys are stored locally and never sent to our servers.
+            Enter your providers' API Keys below.
           </SheetDescription>
         </SheetHeader>
 
