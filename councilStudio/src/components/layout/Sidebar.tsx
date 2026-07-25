@@ -30,9 +30,8 @@ const NAV_ITEMS: NavItem[] = [
   { id: "council", label: "Council", icon: Users, badge: "6" },
   { id: "prompts", label: "Prompts", icon: MessageSquare },
   { id: "sessions", label: "Sessions", icon: History },
-  { id: "templates", label: "Templates", icon: FileText },
   { id: "knowledge", label: "Knowledge Base", icon: BookOpen },
-  { id: "files", label: "Files", icon: FolderOpen },
+  { id: "files", label: "Files", icon: FileText },
 ];
 
 const BOTTOM_ITEMS: NavItem[] = [
