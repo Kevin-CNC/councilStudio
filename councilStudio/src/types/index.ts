@@ -107,7 +107,8 @@ export interface Session {
   updatedAt: number;
   pinned: boolean;
   tags: string[];
-  run: CouncilRun;
+  /** Full run detail. Omitted from list views — fetched lazily on selection. */
+  run?: CouncilRun;
 }
 
 export interface PromptTemplate {

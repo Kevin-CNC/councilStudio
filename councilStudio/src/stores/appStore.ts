@@ -14,6 +14,7 @@ import type {
 import * as bridge from "@/lib/tauri-bridge";
 
 type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
+type ViewId = "home" | "prompts" | "sessions";
 
 interface UIState {
   sidebarOpen: boolean;
@@ -27,6 +28,7 @@ interface UIState {
   selectedSessionId: string | null;
   responsePanelHeight: number;
   responsePanelCollapsed: boolean;
+  currentView: ViewId;
 }
 
 interface AppState {
@@ -72,11 +74,21 @@ interface AppState {
   setJudge: (model: string, provider: Provider) => void;
 
   // Actions - Sessions
+  loadSessions: () => Promise<void>;
   setSelectedSession: (id: string | null) => void;
   addSession: (session: Session) => void;
   pinSession: (id: string) => void;
+  togglePinSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => void;
+  removeSession: (id: string) => Promise<void>;
   restoreSession: (id: string) => void;
+
+  // Actions - Prompt templates
+  loadPromptTemplates: () => Promise<void>;
+  savePromptTemplate: (
+    template: Omit<PromptTemplate, "id" | "createdAt"> & { id?: string }
+  ) => Promise<PromptTemplate>;
+  removePromptTemplate: (id: string) => Promise<void>;
 
   // Actions - UI
   toggleSidebar: () => void;
@@ -88,6 +100,7 @@ interface AppState {
   setActiveTab: (tab: TabId) => void;
   setResponsePanelHeight: (height: number) => void;
   toggleResponsePanelCollapsed: () => void;
+  setCurrentView: (view: ViewId) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -123,6 +136,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     selectedSessionId: null,
     responsePanelHeight: 380,
     responsePanelCollapsed: false,
+    currentView: "home",
   },
 
   // --- Member actions (async, backed by SQLite via Tauri) ---
@@ -324,17 +338,41 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // --- Session actions ---
 
-  setSelectedSession: (id) =>
-    set((state) => {
-      if (!id) return { ui: { ...state.ui, selectedSessionId: null } };
-      const session = state.sessions.find((s) => s.id === id);
-      if (!session) return state;
-      return {
-        ui: { ...state.ui, selectedSessionId: id, activeTab: "responses" },
-        activeRun: session.run,
-        currentPrompt: session.prompt,
-      };
-    }),
+  loadSessions: async () => {
+    try {
+      const sessions = await bridge.listSessions();
+      set({ sessions });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  setSelectedSession: (id) => {
+    if (!id) {
+      set((state) => ({ ui: { ...state.ui, selectedSessionId: null } }));
+      return;
+    }
+    const session = get().sessions.find((s) => s.id === id);
+    if (!session) return;
+
+    set((state) => ({
+      ui: { ...state.ui, selectedSessionId: id, activeTab: "responses" },
+      activeRun: session.run ?? state.activeRun,
+      currentPrompt: session.prompt,
+    }));
+
+    if (!session.run) {
+      bridge
+        .getSession(id)
+        .then((full) => {
+          set((state) => ({
+            sessions: state.sessions.map((s) => (s.id === id ? full : s)),
+            activeRun: state.ui.selectedSessionId === id ? full.run : state.activeRun,
+          }));
+        })
+        .catch((e) => set({ error: String(e) }));
+    }
+  },
 
   addSession: (session) =>
     set((state) => ({
@@ -348,6 +386,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       ),
     })),
 
+  togglePinSession: async (id) => {
+    try {
+      const updated = await bridge.pinSession(id);
+      set((state) => ({
+        sessions: state.sessions.map((s) => (s.id === id ? { ...s, pinned: updated.pinned } : s)),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
   deleteSession: (id) =>
     set((state) => ({
       sessions: state.sessions.filter((s) => s.id !== id),
@@ -356,14 +405,72 @@ export const useAppStore = create<AppState>((set, get) => ({
         : state.ui,
     })),
 
+  removeSession: async (id) => {
+    try {
+      await bridge.deleteSession(id);
+      get().deleteSession(id);
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
   restoreSession: (id) => {
     const session = get().sessions.find((s) => s.id === id);
     if (!session) return;
-    set({
+    set((state) => ({
       currentPrompt: session.prompt,
-      ui: { ...get().ui, selectedSessionId: id, activeTab: "responses" },
-      activeRun: session.run,
-    });
+      ui: { ...state.ui, selectedSessionId: id, activeTab: "responses" },
+      activeRun: session.run ?? state.activeRun,
+    }));
+
+    if (!session.run) {
+      bridge
+        .getSession(id)
+        .then((full) => {
+          set((state) => ({
+            sessions: state.sessions.map((s) => (s.id === id ? full : s)),
+            activeRun: state.ui.selectedSessionId === id ? full.run : state.activeRun,
+          }));
+        })
+        .catch((e) => set({ error: String(e) }));
+    }
+  },
+
+  // --- Prompt template actions ---
+
+  loadPromptTemplates: async () => {
+    try {
+      const promptTemplates = await bridge.listPromptTemplates();
+      set({ promptTemplates });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  savePromptTemplate: async (template) => {
+    try {
+      const saved = await bridge.savePromptTemplate(template);
+      set((state) => ({
+        promptTemplates: template.id
+          ? state.promptTemplates.map((t) => (t.id === saved.id ? saved : t))
+          : [saved, ...state.promptTemplates],
+      }));
+      return saved;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  removePromptTemplate: async (id) => {
+    try {
+      await bridge.deletePromptTemplate(id);
+      set((state) => ({
+        promptTemplates: state.promptTemplates.filter((t) => t.id !== id),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+    }
   },
 
   // --- UI actions ---
@@ -400,6 +507,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({
       ui: { ...state.ui, responsePanelCollapsed: !state.ui.responsePanelCollapsed },
     })),
+
+  setCurrentView: (view) =>
+    set((state) => ({ ui: { ...state.ui, currentView: view } })),
 }));
 
 // ---------------------------------------------------------------------------
@@ -485,6 +595,9 @@ listen<{ runId: string }>("council-run-completed", () => {
       tags: [],
       run: completedRun,
     };
+    bridge.saveSession(session).catch((e) => {
+      useAppStore.setState({ error: String(e) });
+    });
     return {
       isRunning: false,
       activeRun: completedRun,

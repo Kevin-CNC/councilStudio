@@ -37,11 +37,11 @@ const STATUS_STYLES: Record<RunStatus, string> = {
 };
 
 export function SessionList() {
-  const { sessions, setSelectedSession, pinSession } = useAppStore(
+  const { sessions, setSelectedSession, togglePinSession } = useAppStore(
     useShallow((s) => ({
       sessions: s.sessions,
       setSelectedSession: s.setSelectedSession,
-      pinSession: s.pinSession,
+      togglePinSession: s.togglePinSession,
     }))
   );
   const [search, setSearch] = useState("");
@@ -126,7 +126,7 @@ export function SessionList() {
                   session={session}
                   index={i}
                   onSelect={() => setSelectedSession(session.id)}
-                  onPin={() => pinSession(session.id)}
+                  onPin={() => togglePinSession(session.id)}
                 />
               ))}
             </AnimatePresence>
