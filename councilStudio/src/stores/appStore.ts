@@ -12,6 +12,7 @@ import type {
   MemberRunStatus,
 } from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
+import { toast } from "@/components/ui/toaster";
 
 type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
 type ViewId = "home" | "prompts" | "sessions";
@@ -385,7 +386,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addSession: (session) =>
     set((state) => ({
-      sessions: [session, ...state.sessions],
+      sessions: [session, ...state.sessions.filter((s) => s.id !== session.id)],
     })),
 
   pinSession: (id) =>
@@ -559,6 +560,12 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
 
   const unlisten2 = await listen<PersonaResult>("persona-result", (event) => {
     const result = event.payload;
+    if (result.status === "failed") {
+      toast("error", `${result.personaName} failed`, result.error ?? undefined);
+    } else if (result.status === "completed") {
+      toast("success", `${result.personaName} finished`);
+    }
+    // "cancelled" results stay silent — the run-level cancel toast covers them.
     useAppStore.setState((state) => {
       if (!state.activeRun) return state;
       return {
@@ -579,12 +586,16 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
   });
 
   const unlisten3 = await listen<{ status: string }>("judge-status", (event) => {
+    if (event.payload.status === "thinking") {
+      toast("info", "Judge started synthesizing");
+    }
     useAppStore.setState({
       judgeStatus: event.payload.status === "thinking" ? "thinking" : "idle",
     });
   });
 
   const unlisten4 = await listen<JudgeResult>("judge-result", (event) => {
+    toast("success", "Judge finished the summary");
     useAppStore.setState((state) => {
       if (!state.activeRun) return state;
       return {
@@ -598,6 +609,7 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
   });
 
   const unlisten5 = await listen<{ runId: string }>("council-run-completed", () => {
+    toast("success", "Council run complete");
     useAppStore.setState((state) => {
       if (!state.activeRun) return { isRunning: false };
       const resultsArray = Object.values(state.activeRun.personaResults);
@@ -633,12 +645,13 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
       return {
         isRunning: false,
         activeRun: { ...state.activeRun, status: "completed", completedAt: Date.now() },
-        sessions: [session, ...state.sessions],
+        sessions: [session, ...state.sessions.filter((s) => s.id !== session.id)],
       };
     });
   });
 
   const unlisten6 = await listen("council-run-cancelled", () => {
+    toast("info", "Council run cancelled");
     useAppStore.setState((state) => {
       if (!state.activeRun) return { isRunning: false };
       const resultsArray = Object.values(state.activeRun.personaResults);
@@ -674,7 +687,7 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
       return {
         isRunning: false,
         activeRun: { ...state.activeRun, status: "terminated", completedAt: Date.now() },
-        sessions: [session, ...state.sessions],
+        sessions: [session, ...state.sessions.filter((s) => s.id !== session.id)],
       };
     });
   });
