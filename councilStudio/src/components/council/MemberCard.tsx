@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAppStore } from "@/stores/appStore";
+import { PROVIDER_LABELS } from "@/lib/constants";
 import { motion } from "framer-motion";
 import {
   GripVertical,
@@ -19,7 +20,7 @@ import {
   Clock,
   Ban,
 } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,13 +28,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Persona, Provider, MemberRunStatus } from "@/types";
-
-const PROVIDER_LABELS: Record<Provider, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-  ollama: "Ollama",
-};
 
 const PROVIDER_COLORS: Record<Provider, string> = {
   anthropic: "bg-orange-100 text-orange-700 border-orange-200",
@@ -75,24 +69,26 @@ const RUN_STATUS_UI: Record<
 
 interface MemberCardProps {
   persona: Persona;
-  index: number;
   runStatus?: MemberRunStatus;
   dragHandleProps?: any;
 }
 
-export function MemberCard({ persona, index, runStatus, dragHandleProps }: MemberCardProps) {
-  const { setMemberFormOpen, deleteMember, duplicateMember, toggleMemberEnabled } = useAppStore();
+export const MemberCard = memo(function MemberCard({ persona, runStatus, dragHandleProps }: MemberCardProps) {
+  const setMemberFormOpen = useAppStore((s) => s.setMemberFormOpen);
+  const deleteMember = useAppStore((s) => s.deleteMember);
+  const duplicateMember = useAppStore((s) => s.duplicateMember);
+  const toggleMemberEnabled = useAppStore((s) => s.toggleMemberEnabled);
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, delay: index * 0.05 }}
+      transition={{ duration: 0.15 }}
     >
       <Card
         className={cn(
-          "group relative transition-all hover:shadow-md",
+          "group relative transition-shadow hover:shadow-md contain-paint",
           !persona.enabled && "opacity-60"
         )}
       >
@@ -152,7 +148,7 @@ export function MemberCard({ persona, index, runStatus, dragHandleProps }: Membe
                 <span className="text-[10px] text-muted-foreground">Temp:</span>
                 <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-secondary transition-all"
+                    className="h-full rounded-full bg-secondary transition-[width]"
                     style={{ width: `${(persona.temperature / 2) * 100}%` }}
                   />
                 </div>
@@ -209,4 +205,4 @@ export function MemberCard({ persona, index, runStatus, dragHandleProps }: Membe
       </Card>
     </motion.div>
   );
-}
+});

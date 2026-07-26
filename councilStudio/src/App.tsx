@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Dashboard } from "@/pages/Dashboard";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useAppStore } from "@/stores/appStore";
+import { useAppStore, initStoreListeners, resetListenerGuard } from "@/stores/appStore";
 import { seedDefaultMembers } from "@/lib/tauri-bridge";
 
 function App() {
@@ -26,6 +26,18 @@ function App() {
     }
     init();
   }, [loadMembers, loadSessions, loadPromptTemplates]);
+
+  // Tauri event listener lifecycle — register once, clean up on unmount.
+  useEffect(() => {
+    let unlisteners: (() => void)[] = [];
+    initStoreListeners().then((fns) => {
+      unlisteners = fns;
+    });
+    return () => {
+      unlisteners.forEach((fn) => fn());
+      resetListenerGuard();
+    };
+  }, []);
 
   return (
     <TooltipProvider>

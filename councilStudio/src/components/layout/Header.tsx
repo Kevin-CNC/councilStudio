@@ -21,7 +21,7 @@ import {
 export function Header() {
   const { theme, setTheme, setSettingsOpen, toggleSidebar } = useAppStore(
     useShallow((s) => ({
-      theme: s.ui.theme,
+      theme: s.theme,
       setTheme: s.setTheme,
       setSettingsOpen: s.setSettingsOpen,
       toggleSidebar: s.toggleSidebar,

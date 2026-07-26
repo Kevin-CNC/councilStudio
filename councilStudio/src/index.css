@@ -64,3 +64,30 @@
   --color-input: hsl(222 16% 22%);
   --color-ring: hsl(207 68% 55%);
 }
+
+/* Performance: CSS containment utilities */
+.contain-paint {
+  contain: layout paint;
+}
+.contain-strict {
+  contain: strict;
+}
+
+/* Streaming cursor — blinks 3 times then stops */
+@keyframes blink {
+  50% { opacity: 0; }
+}
+.animate-blink-3 {
+  animation: blink 1s step-end 3;
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -31,7 +31,7 @@ const OLLAMA_PROVIDER: { id: Provider; name: string; placeholder: string } = {
 export function ApiKeysPanel() {
   const { apiKeysOpen, setApiKeysOpen } = useAppStore(
     useShallow((s) => ({
-      apiKeysOpen: s.ui.apiKeysOpen,
+      apiKeysOpen: s.apiKeysOpen,
       setApiKeysOpen: s.setApiKeysOpen,
     }))
   );

@@ -16,19 +16,16 @@ import * as bridge from "@/lib/tauri-bridge";
 type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
 type ViewId = "home" | "prompts" | "sessions";
 
-interface UIState {
-  sidebarOpen: boolean;
-  rightPanelOpen: boolean;
-  theme: Theme;
-  settingsOpen: boolean;
-  apiKeysOpen: boolean;
-  memberFormOpen: boolean;
-  editingMemberId: string | null;
-  activeTab: TabId;
-  selectedSessionId: string | null;
-  responsePanelHeight: number;
-  responsePanelCollapsed: boolean;
-  currentView: ViewId;
+/** Internal active run — personaResults stored as Record for O(1) streaming updates. */
+export type ActiveRun = Omit<CouncilRun, "personaResults"> & {
+  personaResults: Record<string, PersonaResult>;
+};
+
+/** Convert a CouncilRun (array) to ActiveRun (Record) for the store. */
+function toActiveRun(run: CouncilRun): ActiveRun {
+  const map: Record<string, PersonaResult> = {};
+  for (const r of run.personaResults) map[r.personaId] = r;
+  return { ...run, personaResults: map };
 }
 
 interface AppState {
@@ -40,7 +37,7 @@ interface AppState {
 
   // Run state
   isRunning: boolean;
-  activeRun: CouncilRun | null;
+  activeRun: ActiveRun | null;
   cancelledRunId: string | null;
   judgeModel: string;
   judgeProvider: Provider;
@@ -53,8 +50,19 @@ interface AppState {
   isLoading: boolean;
   error: string | null;
 
-  // UI
-  ui: UIState;
+  // UI — flattened for fine-grained subscriptions
+  sidebarOpen: boolean;
+  rightPanelOpen: boolean;
+  theme: Theme;
+  settingsOpen: boolean;
+  apiKeysOpen: boolean;
+  memberFormOpen: boolean;
+  editingMemberId: string | null;
+  activeTab: TabId;
+  selectedSessionId: string | null;
+  responsePanelHeight: number;
+  responsePanelCollapsed: boolean;
+  currentView: ViewId;
 
   // Actions - Members
   loadMembers: () => Promise<void>;
@@ -123,21 +131,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  // Initial UI state
-  ui: {
-    sidebarOpen: true,
-    rightPanelOpen: false,
-    theme: "light",
-    settingsOpen: false,
-    apiKeysOpen: false,
-    memberFormOpen: false,
-    editingMemberId: null,
-    activeTab: "overview",
-    selectedSessionId: null,
-    responsePanelHeight: 380,
-    responsePanelCollapsed: false,
-    currentView: "home",
-  },
+  // Initial UI state — flat keys for fine-grained subscriptions
+  sidebarOpen: true,
+  rightPanelOpen: false,
+  theme: "light",
+  settingsOpen: false,
+  apiKeysOpen: false,
+  memberFormOpen: false,
+  editingMemberId: null,
+  activeTab: "overview",
+  selectedSessionId: null,
+  responsePanelHeight: 380,
+  responsePanelCollapsed: false,
+  currentView: "home",
 
   // --- Member actions (async, backed by SQLite via Tauri) ---
 
@@ -275,12 +281,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
 
-    const activeRun: CouncilRun = {
+    const activeRun: ActiveRun = {
       id: crypto.randomUUID(),
       configId: "default",
       prompt: currentPrompt,
       status: "running",
-      personaResults: [],
+      personaResults: {},
       startedAt: Date.now(),
     };
 
@@ -349,15 +355,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setSelectedSession: (id) => {
     if (!id) {
-      set((state) => ({ ui: { ...state.ui, selectedSessionId: null } }));
+      set({ selectedSessionId: null });
       return;
     }
     const session = get().sessions.find((s) => s.id === id);
     if (!session) return;
 
     set((state) => ({
-      ui: { ...state.ui, selectedSessionId: id, activeTab: "responses" },
-      activeRun: session.run ?? state.activeRun,
+      selectedSessionId: id,
+      activeTab: "responses",
+      activeRun: session.run ? toActiveRun(session.run) : state.activeRun,
       currentPrompt: session.prompt,
     }));
 
@@ -367,7 +374,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         .then((full) => {
           set((state) => ({
             sessions: state.sessions.map((s) => (s.id === id ? full : s)),
-            activeRun: state.ui.selectedSessionId === id ? full.run : state.activeRun,
+            activeRun: state.selectedSessionId === id && full.run
+              ? toActiveRun(full.run)
+              : state.activeRun,
           }));
         })
         .catch((e) => set({ error: String(e) }));
@@ -400,9 +409,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   deleteSession: (id) =>
     set((state) => ({
       sessions: state.sessions.filter((s) => s.id !== id),
-      ui: state.ui.selectedSessionId === id
-        ? { ...state.ui, selectedSessionId: null }
-        : state.ui,
+      selectedSessionId: state.selectedSessionId === id ? null : state.selectedSessionId,
     })),
 
   removeSession: async (id) => {
@@ -419,8 +426,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!session) return;
     set((state) => ({
       currentPrompt: session.prompt,
-      ui: { ...state.ui, selectedSessionId: id, activeTab: "responses" },
-      activeRun: session.run ?? state.activeRun,
+      selectedSessionId: id,
+      activeTab: "responses",
+      activeRun: session.run ? toActiveRun(session.run) : state.activeRun,
     }));
 
     if (!session.run) {
@@ -429,7 +437,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         .then((full) => {
           set((state) => ({
             sessions: state.sessions.map((s) => (s.id === id ? full : s)),
-            activeRun: state.ui.selectedSessionId === id ? full.run : state.activeRun,
+            activeRun: state.selectedSessionId === id && full.run
+              ? toActiveRun(full.run)
+              : state.activeRun,
           }));
         })
         .catch((e) => set({ error: String(e) }));
@@ -475,172 +485,204 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // --- UI actions ---
 
-  toggleSidebar: () =>
-    set((state) => ({ ui: { ...state.ui, sidebarOpen: !state.ui.sidebarOpen } })),
+  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
-  toggleRightPanel: () =>
-    set((state) => ({ ui: { ...state.ui, rightPanelOpen: !state.ui.rightPanelOpen } })),
+  toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
 
   setTheme: (theme) => {
-    set((state) => ({ ui: { ...state.ui, theme } }));
+    set({ theme });
     document.documentElement.classList.toggle("dark", theme === "dark");
   },
 
-  setSettingsOpen: (open) =>
-    set((state) => ({ ui: { ...state.ui, settingsOpen: open } })),
+  setSettingsOpen: (open) => set({ settingsOpen: open }),
 
-  setApiKeysOpen: (open) =>
-    set((state) => ({ ui: { ...state.ui, apiKeysOpen: open } })),
+  setApiKeysOpen: (open) => set({ apiKeysOpen: open }),
 
   setMemberFormOpen: (open, editingId = null) =>
-    set((state) => ({
-      ui: { ...state.ui, memberFormOpen: open, editingMemberId: editingId },
-    })),
+    set({ memberFormOpen: open, editingMemberId: editingId }),
 
-  setActiveTab: (tab) =>
-    set((state) => ({ ui: { ...state.ui, activeTab: tab } })),
+  setActiveTab: (tab) => set({ activeTab: tab }),
 
-  setResponsePanelHeight: (height) =>
-    set((state) => ({ ui: { ...state.ui, responsePanelHeight: height } })),
+  setResponsePanelHeight: (height) => set({ responsePanelHeight: height }),
 
   toggleResponsePanelCollapsed: () =>
-    set((state) => ({
-      ui: { ...state.ui, responsePanelCollapsed: !state.ui.responsePanelCollapsed },
-    })),
+    set((state) => ({ responsePanelCollapsed: !state.responsePanelCollapsed })),
 
-  setCurrentView: (view) =>
-    set((state) => ({ ui: { ...state.ui, currentView: view } })),
+  setCurrentView: (view) => set({ currentView: view }),
 }));
 
 // ---------------------------------------------------------------------------
-// Tauri event listeners — registered once at module load. The Rust backend
-// emits these during a council run (see orchestrator.rs).
+// Named selectors — exported for fine-grained component subscriptions.
 // ---------------------------------------------------------------------------
 
-listen<{ personaId: string; status: MemberRunStatus }>(
-  "persona-status",
-  (event) => {
-    const { personaId, status } = event.payload;
-    useAppStore.setState((state) => ({
-      personaStatuses: { ...state.personaStatuses, [personaId]: status },
-    }));
-  }
-);
+export const selectMembers = (s: AppState) => s.members;
+export const selectSessions = (s: AppState) => s.sessions;
+export const selectPromptTemplates = (s: AppState) => s.promptTemplates;
+export const selectCurrentPrompt = (s: AppState) => s.currentPrompt;
+export const selectIsRunning = (s: AppState) => s.isRunning;
+export const selectActiveRun = (s: AppState) => s.activeRun;
+export const selectPersonaStatuses = (s: AppState) => s.personaStatuses;
+export const selectJudgeStatus = (s: AppState) => s.judgeStatus;
+export const selectIsLoading = (s: AppState) => s.isLoading;
+export const selectError = (s: AppState) => s.error;
+export const selectSidebarOpen = (s: AppState) => s.sidebarOpen;
+export const selectCurrentView = (s: AppState) => s.currentView;
+export const selectActiveTab = (s: AppState) => s.activeTab;
+export const selectTheme = (s: AppState) => s.theme;
+export const selectJudgeModel = (s: AppState) => s.judgeModel;
+export const selectJudgeProvider = (s: AppState) => s.judgeProvider;
+export const selectPersonaResultsArray = (s: AppState) =>
+  s.activeRun ? Object.values(s.activeRun.personaResults) : [];
 
-listen<PersonaResult>("persona-result", (event) => {
-  const result = event.payload;
-  useAppStore.setState((state) => {
-    if (!state.activeRun) return state;
-    const others = state.activeRun.personaResults.filter(
-      (r) => r.personaId !== result.personaId
-    );
-    return {
-      activeRun: {
-        ...state.activeRun,
-        personaResults: [...others, result],
-        status: "streaming",
-      },
-      personaStatuses: {
-        ...state.personaStatuses,
-        [result.personaId]: result.status === "failed" ? "failed" : "completed",
-      },
-    };
-  });
-});
+// ---------------------------------------------------------------------------
+// Tauri event listeners — wrapped in initStoreListeners() for lifecycle
+// management. Called once from App.tsx; cleaned up on unmount.
+// ---------------------------------------------------------------------------
 
-listen<{ status: string }>("judge-status", (event) => {
-  useAppStore.setState({
-    judgeStatus: event.payload.status === "thinking" ? "thinking" : "idle",
-  });
-});
+let listenersInitialized = false;
 
-listen<JudgeResult>("judge-result", (event) => {
-  useAppStore.setState((state) => {
-    if (!state.activeRun) return state;
-    return {
-      judgeStatus: "idle",
-      activeRun: {
-        ...state.activeRun,
-        judgeResult: event.payload,
-      },
-    };
-  });
-});
+type UnlistenFn = () => void;
 
-listen<{ runId: string }>("council-run-completed", () => {
-  useAppStore.setState((state) => {
-    if (!state.activeRun) return { isRunning: false };
-    const completedRun: CouncilRun = {
-      ...state.activeRun,
-      status: "completed",
-      completedAt: Date.now(),
-    };
-    const session: Session = {
-      id: completedRun.id,
-      title: completedRun.prompt.slice(0, 60),
-      prompt: completedRun.prompt,
-      configId: completedRun.configId,
-      configName: "Default",
-      status: "completed",
-      personaCount: completedRun.personaResults.length,
-      tokensUsed: completedRun.personaResults.reduce(
-        (s, r) => s + r.tokensIn + r.tokensOut,
-        0
-      ),
-      totalCost: completedRun.personaResults.reduce((s, r) => s + r.cost, 0),
-      durationMs: completedRun.completedAt! - completedRun.startedAt,
-      createdAt: completedRun.startedAt,
-      updatedAt: completedRun.completedAt!,
-      pinned: false,
-      tags: [],
-      run: completedRun,
-    };
-    bridge.saveSession(session).catch((e) => {
-      useAppStore.setState({ error: String(e) });
+export async function initStoreListeners(): Promise<UnlistenFn[]> {
+  if (listenersInitialized) return [];
+  listenersInitialized = true;
+
+  const unlisten1 = await listen<{ personaId: string; status: MemberRunStatus }>(
+    "persona-status",
+    (event) => {
+      const { personaId, status } = event.payload;
+      useAppStore.setState((state) => ({
+        personaStatuses: { ...state.personaStatuses, [personaId]: status },
+      }));
+    }
+  );
+
+  const unlisten2 = await listen<PersonaResult>("persona-result", (event) => {
+    const result = event.payload;
+    useAppStore.setState((state) => {
+      if (!state.activeRun) return state;
+      return {
+        activeRun: {
+          ...state.activeRun,
+          personaResults: {
+            ...state.activeRun.personaResults,
+            [result.personaId]: result,
+          },
+          status: "streaming",
+        },
+        personaStatuses: {
+          ...state.personaStatuses,
+          [result.personaId]: result.status === "failed" ? "failed" : "completed",
+        },
+      };
     });
-    return {
-      isRunning: false,
-      activeRun: completedRun,
-      sessions: [session, ...state.sessions],
-    };
   });
-});
 
-listen("council-run-cancelled", () => {
-  useAppStore.setState((state) => {
-    if (!state.activeRun) return { isRunning: false };
-    const terminatedRun: CouncilRun = {
-      ...state.activeRun,
-      status: "terminated",
-      completedAt: Date.now(),
-    };
-    const session: Session = {
-      id: terminatedRun.id,
-      title: terminatedRun.prompt.slice(0, 60),
-      prompt: terminatedRun.prompt,
-      configId: terminatedRun.configId,
-      configName: "Default",
-      status: "terminated",
-      personaCount: terminatedRun.personaResults.length,
-      tokensUsed: terminatedRun.personaResults.reduce(
-        (s, r) => s + r.tokensIn + r.tokensOut,
-        0
-      ),
-      totalCost: terminatedRun.personaResults.reduce((s, r) => s + r.cost, 0),
-      durationMs: terminatedRun.completedAt! - terminatedRun.startedAt,
-      createdAt: terminatedRun.startedAt,
-      updatedAt: terminatedRun.completedAt!,
-      pinned: false,
-      tags: [],
-      run: terminatedRun,
-    };
-    bridge.saveSession(session).catch((e) => {
-      useAppStore.setState({ error: String(e) });
+  const unlisten3 = await listen<{ status: string }>("judge-status", (event) => {
+    useAppStore.setState({
+      judgeStatus: event.payload.status === "thinking" ? "thinking" : "idle",
     });
-    return {
-      isRunning: false,
-      activeRun: terminatedRun,
-      sessions: [session, ...state.sessions],
-    };
   });
-});
+
+  const unlisten4 = await listen<JudgeResult>("judge-result", (event) => {
+    useAppStore.setState((state) => {
+      if (!state.activeRun) return state;
+      return {
+        judgeStatus: "idle",
+        activeRun: {
+          ...state.activeRun,
+          judgeResult: event.payload,
+        },
+      };
+    });
+  });
+
+  const unlisten5 = await listen<{ runId: string }>("council-run-completed", () => {
+    useAppStore.setState((state) => {
+      if (!state.activeRun) return { isRunning: false };
+      const resultsArray = Object.values(state.activeRun.personaResults);
+      const completedRun: CouncilRun = {
+        ...state.activeRun,
+        personaResults: resultsArray,
+        status: "completed",
+        completedAt: Date.now(),
+      };
+      const session: Session = {
+        id: completedRun.id,
+        title: completedRun.prompt.slice(0, 60),
+        prompt: completedRun.prompt,
+        configId: completedRun.configId,
+        configName: "Default",
+        status: "completed",
+        personaCount: resultsArray.length,
+        tokensUsed: resultsArray.reduce(
+          (s, r) => s + r.tokensIn + r.tokensOut,
+          0
+        ),
+        totalCost: resultsArray.reduce((s, r) => s + r.cost, 0),
+        durationMs: completedRun.completedAt! - completedRun.startedAt,
+        createdAt: completedRun.startedAt,
+        updatedAt: completedRun.completedAt!,
+        pinned: false,
+        tags: [],
+        run: completedRun,
+      };
+      bridge.saveSession(session).catch((e) => {
+        useAppStore.setState({ error: String(e) });
+      });
+      return {
+        isRunning: false,
+        activeRun: { ...state.activeRun, status: "completed", completedAt: Date.now() },
+        sessions: [session, ...state.sessions],
+      };
+    });
+  });
+
+  const unlisten6 = await listen("council-run-cancelled", () => {
+    useAppStore.setState((state) => {
+      if (!state.activeRun) return { isRunning: false };
+      const resultsArray = Object.values(state.activeRun.personaResults);
+      const terminatedRun: CouncilRun = {
+        ...state.activeRun,
+        personaResults: resultsArray,
+        status: "terminated",
+        completedAt: Date.now(),
+      };
+      const session: Session = {
+        id: terminatedRun.id,
+        title: terminatedRun.prompt.slice(0, 60),
+        prompt: terminatedRun.prompt,
+        configId: terminatedRun.configId,
+        configName: "Default",
+        status: "terminated",
+        personaCount: resultsArray.length,
+        tokensUsed: resultsArray.reduce(
+          (s, r) => s + r.tokensIn + r.tokensOut,
+          0
+        ),
+        totalCost: resultsArray.reduce((s, r) => s + r.cost, 0),
+        durationMs: terminatedRun.completedAt! - terminatedRun.startedAt,
+        createdAt: terminatedRun.startedAt,
+        updatedAt: terminatedRun.completedAt!,
+        pinned: false,
+        tags: [],
+        run: terminatedRun,
+      };
+      bridge.saveSession(session).catch((e) => {
+        useAppStore.setState({ error: String(e) });
+      });
+      return {
+        isRunning: false,
+        activeRun: { ...state.activeRun, status: "terminated", completedAt: Date.now() },
+        sessions: [session, ...state.sessions],
+      };
+    });
+  });
+
+  return [unlisten1, unlisten2, unlisten3, unlisten4, unlisten5, unlisten6];
+}
+
+/** Reset the guard so listeners can be re-initialized (e.g., after HMR). */
+export function resetListenerGuard(): void {
+  listenersInitialized = false;
+}

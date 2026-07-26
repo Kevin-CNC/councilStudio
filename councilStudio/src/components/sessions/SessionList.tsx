@@ -1,8 +1,5 @@
-import { useState, useMemo } from "react";
-import { cn } from "@/lib/utils";
+import { useState, useMemo, useCallback } from "react";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -16,26 +13,10 @@ import { useShallow } from "zustand/react/shallow";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search,
-  Pin,
-  Clock,
-  Users,
-  DollarSign,
   History,
   SlidersHorizontal,
 } from "lucide-react";
-import { formatTokens, formatCost } from "@/lib/utils";
-import type { Session, RunStatus } from "@/types";
-
-const STATUS_STYLES: Record<RunStatus, string> = {
-  queued: "bg-muted text-muted-foreground",
-  running: "bg-blue-100 text-blue-700",
-  streaming: "bg-blue-100 text-blue-700",
-  completed: "bg-green-100 text-green-700",
-  partial: "bg-yellow-100 text-yellow-700",
-  failed: "bg-red-100 text-red-700",
-  cancelled: "bg-muted text-muted-foreground",
-  terminated: "bg-red-100 text-red-700",
-};
+import { SessionCard } from "./SessionCard";
 
 export function SessionList() {
   const { sessions, setSelectedSession, togglePinSession } = useAppStore(
@@ -51,7 +32,6 @@ export function SessionList() {
   const filtered = useMemo(() => {
     let result = [...sessions];
 
-    // Search filter
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(
@@ -59,7 +39,6 @@ export function SessionList() {
       );
     }
 
-    // Status filter
     if (filter !== "all") {
       if (filter === "pinned") {
         result = result.filter((s) => s.pinned);
@@ -68,7 +47,6 @@ export function SessionList() {
       }
     }
 
-    // Sort: pinned first, then by date
     result.sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       return b.createdAt - a.createdAt;
@@ -76,6 +54,15 @@ export function SessionList() {
 
     return result;
   }, [sessions, search, filter]);
+
+  const handleSelect = useCallback(
+    (id: string) => setSelectedSession(id),
+    [setSelectedSession]
+  );
+  const handlePin = useCallback(
+    (id: string) => togglePinSession(id),
+    [togglePinSession]
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -122,13 +109,12 @@ export function SessionList() {
             <EmptyState />
           ) : (
             <AnimatePresence>
-              {filtered.map((session, i) => (
+              {filtered.map((session) => (
                 <SessionCard
                   key={session.id}
                   session={session}
-                  index={i}
-                  onSelect={() => setSelectedSession(session.id)}
-                  onPin={() => togglePinSession(session.id)}
+                  onSelect={() => handleSelect(session.id)}
+                  onPin={() => handlePin(session.id)}
                 />
               ))}
             </AnimatePresence>
@@ -136,93 +122,6 @@ export function SessionList() {
         </div>
       </ScrollArea>
     </div>
-  );
-}
-
-function SessionCard({
-  session,
-  index,
-  onSelect,
-  onPin,
-}: {
-  session: Session;
-  index: number;
-  onSelect: () => void;
-  onPin: () => void;
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, x: 10 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.2, delay: index * 0.03 }}
-      layout
-    >
-      <Card
-        className="cursor-pointer transition-all hover:shadow-md hover:border-secondary/30 group"
-        onClick={onSelect}
-      >
-        <CardContent className="p-3">
-          <div className="flex items-start gap-2">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-xs font-medium text-foreground line-clamp-1">
-                  {session.title}
-                </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onPin();
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Pin
-                    className={cn(
-                      "h-3 w-3",
-                      session.pinned ? "fill-yellow-400 text-yellow-400 opacity-100" : "text-muted-foreground"
-                    )}
-                  />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-2">
-                <span className="flex items-center gap-0.5">
-                  <Clock className="h-3 w-3" />
-                  {new Date(session.createdAt).toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-              </div>
-
-              <div className="flex items-center gap-3 text-[10px]">
-                <span className="flex items-center gap-0.5">
-                  <Users className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-foreground font-medium">{session.personaCount}</span>
-                </span>
-                <span className="flex items-center gap-0.5">
-                  <span className="text-muted-foreground">Tokens:</span>
-                  <span className="text-foreground font-medium">
-                    {formatTokens(session.tokensUsed)}
-                  </span>
-                </span>
-                <span className="flex items-center gap-0.5">
-                  <DollarSign className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-foreground font-medium">
-                    {formatCost(session.totalCost)}
-                  </span>
-                </span>
-              </div>
-            </div>
-
-            <Badge variant="outline" className={cn("shrink-0 text-[10px]", STATUS_STYLES[session.status])}>
-              {session.status}
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
   );
 }
 

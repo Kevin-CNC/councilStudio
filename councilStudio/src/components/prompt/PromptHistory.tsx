@@ -6,7 +6,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAppStore } from "@/stores/appStore";
+import { useAppStore, selectPromptTemplates, selectSessions } from "@/stores/appStore";
 import { Search, FileText, Clock } from "lucide-react";
 
 interface PromptHistoryProps {
@@ -15,7 +15,8 @@ interface PromptHistoryProps {
 }
 
 export function PromptHistory({ onSelect, children }: PromptHistoryProps) {
-  const { promptTemplates, sessions } = useAppStore();
+  const promptTemplates = useAppStore(selectPromptTemplates);
+  const sessions = useAppStore(selectSessions);
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
 

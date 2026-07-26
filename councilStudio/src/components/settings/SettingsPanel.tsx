@@ -20,9 +20,9 @@ import { Palette, Keyboard, Bell } from "lucide-react";
 export function SettingsPanel() {
   const { settingsOpen, setSettingsOpen, theme, setTheme } = useAppStore(
     useShallow((s) => ({
-      settingsOpen: s.ui.settingsOpen,
+      settingsOpen: s.settingsOpen,
       setSettingsOpen: s.setSettingsOpen,
-      theme: s.ui.theme,
+      theme: s.theme,
       setTheme: s.setTheme,
     }))
   );
@@ -83,7 +83,7 @@ function AppearanceSection({ theme, setTheme }: { theme: Theme; setTheme: (t: Th
               key={t}
               id={`settings-theme-option-${t}`}
               onClick={() => setTheme(t)}
-              className={`rounded-lg border-2 p-3 text-center transition-all ${
+              className={`rounded-lg border-2 p-3 text-center transition-[border-color,background-color] ${
                 theme === t ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/30"
               }`}
             >

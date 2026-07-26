@@ -12,41 +12,54 @@ const BOTTOM_MARGIN = 200;
 export function ResponsePanelDock() {
   const { height, collapsed, setHeight, toggleCollapsed } = useAppStore(
     useShallow((s) => ({
-      height: s.ui.responsePanelHeight,
-      collapsed: s.ui.responsePanelCollapsed,
+      height: s.responsePanelHeight,
+      collapsed: s.responsePanelCollapsed,
       setHeight: s.setResponsePanelHeight,
       toggleCollapsed: s.toggleResponsePanelCollapsed,
     }))
   );
 
   const [isDragging, setIsDragging] = useState(false);
+  const dockRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
   const startYRef = useRef(0);
-  const startHeightRef = useRef(height);
+  const startHeightRef = useRef(0);
 
+  // During drag: update CSS custom property only (no React re-render).
   const handlePointerMove = useCallback(
     (e: PointerEvent) => {
       if (!draggingRef.current) return;
       const delta = startYRef.current - e.clientY;
       const maxHeight = window.innerHeight - BOTTOM_MARGIN;
       const next = Math.min(maxHeight, Math.max(MIN_HEIGHT, startHeightRef.current + delta));
-      setHeight(next);
+      if (dockRef.current) {
+        dockRef.current.style.setProperty("--panel-height", `${next}px`);
+      }
     },
-    [setHeight]
+    [] // No setHeight dep — no re-render loop
   );
 
+  // On pointer up: finalize height to store.
   const handlePointerUp = useCallback(() => {
     draggingRef.current = false;
     setIsDragging(false);
     window.removeEventListener("pointermove", handlePointerMove);
     window.removeEventListener("pointerup", handlePointerUp);
-  }, [handlePointerMove]);
+    if (dockRef.current) {
+      const currentHeight = dockRef.current.style.getPropertyValue("--panel-height");
+      if (currentHeight) {
+        setHeight(parseInt(currentHeight, 10));
+      }
+    }
+  }, [handlePointerMove, setHeight]);
 
   const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     draggingRef.current = true;
     setIsDragging(true);
     startYRef.current = e.clientY;
-    startHeightRef.current = height;
+    if (dockRef.current) {
+      startHeightRef.current = dockRef.current.getBoundingClientRect().height;
+    }
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
   };
@@ -72,7 +85,12 @@ export function ResponsePanelDock() {
   }
 
   return (
-    <div id="response-panel-dock" className="flex flex-shrink-0 flex-col" style={{ height }}>
+    <div
+      id="response-panel-dock"
+      ref={dockRef}
+      className="flex flex-shrink-0 flex-col contain-paint"
+      style={{ height: `var(--panel-height, ${height}px)` }}
+    >
       <div
         id="response-panel-resize-handle"
         onPointerDown={handlePointerDown}

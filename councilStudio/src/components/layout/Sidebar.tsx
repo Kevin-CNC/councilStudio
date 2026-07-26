@@ -1,3 +1,4 @@
+import { memo, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,6 @@ import {
   History,
   FileText,
   BookOpen,
-  FolderOpen,
   BarChart3,
   Plug,
   Key,
@@ -44,8 +44,8 @@ const BOTTOM_ITEMS: NavItem[] = [
 export function Sidebar() {
   const { sidebarOpen, currentView, toggleSidebar, setSettingsOpen, setApiKeysOpen, setCurrentView } = useAppStore(
     useShallow((s) => ({
-      sidebarOpen: s.ui.sidebarOpen,
-      currentView: s.ui.currentView,
+      sidebarOpen: s.sidebarOpen,
+      currentView: s.currentView,
       toggleSidebar: s.toggleSidebar,
       setSettingsOpen: s.setSettingsOpen,
       setApiKeysOpen: s.setApiKeysOpen,
@@ -53,17 +53,20 @@ export function Sidebar() {
     }))
   );
 
-  const handleNavClick = (id: string) => {
-    if (id === "settings") {
-      setSettingsOpen(true);
-    } else if (id === "api-keys") {
-      setApiKeysOpen(true);
-    } else if (id === "home" || id === "council") {
-      setCurrentView("home");
-    } else if (id === "prompts" || id === "sessions") {
-      setCurrentView(id);
-    }
-  };
+  const handleNavClick = useCallback(
+    (id: string) => {
+      if (id === "settings") {
+        setSettingsOpen(true);
+      } else if (id === "api-keys") {
+        setApiKeysOpen(true);
+      } else if (id === "home" || id === "council") {
+        setCurrentView("home");
+      } else if (id === "prompts" || id === "sessions") {
+        setCurrentView(id);
+      }
+    },
+    [setSettingsOpen, setApiKeysOpen, setCurrentView]
+  );
 
   const isActive = (id: string) =>
     id === currentView || (currentView === "home" && id === "council");
@@ -72,7 +75,7 @@ export function Sidebar() {
     <aside
       id="app-sidebar"
       className={cn(
-        "flex h-full flex-col border-r border-border bg-card transition-all duration-200",
+        "flex h-full flex-col border-r border-border bg-card transition-[width] duration-200 contain-paint",
         sidebarOpen ? "w-60" : "w-16"
       )}
     >
@@ -98,7 +101,7 @@ export function Sidebar() {
               item={item}
               collapsed={!sidebarOpen}
               active={isActive(item.id)}
-              onClick={() => handleNavClick(item.id)}
+              onNavigate={handleNavClick}
             />
           ))}
         </nav>
@@ -118,7 +121,7 @@ export function Sidebar() {
               item={item}
               collapsed={!sidebarOpen}
               active={isActive(item.id)}
-              onClick={() => handleNavClick(item.id)}
+              onNavigate={handleNavClick}
             />
           ))}
         </nav>
@@ -150,21 +153,21 @@ export function Sidebar() {
   );
 }
 
-function SidebarNavItem({
+const SidebarNavItem = memo(function SidebarNavItem({
   item,
   collapsed,
   active,
-  onClick,
+  onNavigate,
 }: {
   item: NavItem;
   collapsed: boolean;
   active?: boolean;
-  onClick?: () => void;
+  onNavigate: (id: string) => void;
 }) {
   return (
     <button
       id={`sidebar-nav-${item.id}`}
-      onClick={onClick}
+      onClick={() => onNavigate(item.id)}
       className={cn(
         "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
         "hover:bg-muted hover:text-foreground",
@@ -186,4 +189,4 @@ function SidebarNavItem({
       )}
     </button>
   );
-}
+});
