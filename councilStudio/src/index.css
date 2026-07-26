@@ -81,6 +81,21 @@
   animation: blink 1s step-end 3;
 }
 
+/* Toast entry — slide in from the right with a fade */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.toast-in {
+  animation: toast-in 0.2s ease-out;
+}
+
 /* Respect user's motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,
