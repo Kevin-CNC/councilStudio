@@ -1,4 +1,5 @@
-import { useAppStore } from "@/stores/appStore";
+import { lazy, Suspense } from "react";
+import { useAppStore, selectIsLoading, selectError, selectCurrentView } from "@/stores/appStore";
 import { MemberList } from "@/components/council/MemberList";
 import { MemberForm } from "@/components/council/MemberForm";
 import { PromptEditor } from "@/components/prompt/PromptEditor";
@@ -6,16 +7,28 @@ import { SessionList } from "@/components/sessions/SessionList";
 import { ResponsePanelDock } from "@/components/responses/ResponsePanelDock";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { ApiKeysPanel } from "@/components/settings/ApiKeysPanel";
-import { SessionsPage } from "@/pages/SessionsPage";
-import { PromptsPage } from "@/pages/PromptsPage";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 
+const SessionsPage = lazy(() => import("@/pages/SessionsPage").then((m) => ({ default: m.SessionsPage })));
+const PromptsPage = lazy(() => import("@/pages/PromptsPage").then((m) => ({ default: m.PromptsPage })));
+
+function PageSkeleton() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <div className="flex flex-col items-center gap-3 text-muted-foreground">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <span className="text-sm">Loading...</span>
+      </div>
+    </div>
+  );
+}
+
 export function Dashboard() {
-  const isLoading = useAppStore((s) => s.isLoading);
-  const error = useAppStore((s) => s.error);
-  const currentView = useAppStore((s) => s.ui.currentView);
+  const isLoading = useAppStore(selectIsLoading);
+  const error = useAppStore(selectError);
+  const currentView = useAppStore(selectCurrentView);
 
   if (isLoading) {
     return (
@@ -37,9 +50,13 @@ export function Dashboard() {
       )}
 
       {currentView === "sessions" ? (
-        <SessionsPage />
+        <Suspense fallback={<PageSkeleton />}>
+          <SessionsPage />
+        </Suspense>
       ) : currentView === "prompts" ? (
-        <PromptsPage />
+        <Suspense fallback={<PageSkeleton />}>
+          <PromptsPage />
+        </Suspense>
       ) : (
         <div id="dashboard-root" className="flex h-full flex-col">
           {/* Top section: 3-column layout */}
@@ -59,7 +76,7 @@ export function Dashboard() {
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3, delay: 0.05 }}
+                transition={{ duration: 0.15 }}
                 className="order-1 xl:order-2"
               >
                 <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -71,7 +88,7 @@ export function Dashboard() {
               <motion.div
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.3, delay: 0.1 }}
+                transition={{ duration: 0.15 }}
                 className="order-3"
               >
                 <SessionList />

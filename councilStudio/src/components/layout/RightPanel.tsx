@@ -18,7 +18,7 @@ import {
 export function RightPanel() {
   const { rightPanelOpen, toggleRightPanel } = useAppStore(
     useShallow((s) => ({
-      rightPanelOpen: s.ui.rightPanelOpen,
+      rightPanelOpen: s.rightPanelOpen,
       toggleRightPanel: s.toggleRightPanel,
     }))
   );
@@ -206,7 +206,7 @@ function LatencyTab() {
           </div>
           <div className="mt-1 h-1 w-full rounded-full bg-muted overflow-hidden">
             <div
-              className="h-full rounded-full bg-secondary transition-all"
+              className="h-full rounded-full bg-secondary transition-[width]"
               style={{ width: `${(parseFloat(e.time) / 5) * 100}%` }}
             />
           </div>

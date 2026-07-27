@@ -2,7 +2,8 @@ import { useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Dashboard } from "@/pages/Dashboard";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { useAppStore } from "@/stores/appStore";
+import { Toaster } from "@/components/ui/toaster";
+import { useAppStore, initStoreListeners, resetListenerGuard } from "@/stores/appStore";
 import { seedDefaultMembers } from "@/lib/tauri-bridge";
 
 function App() {
@@ -27,11 +28,33 @@ function App() {
     init();
   }, [loadMembers, loadSessions, loadPromptTemplates]);
 
+  // Tauri event listener lifecycle — register once, clean up on unmount.
+  // StrictMode mounts → cleans up → remounts before the async listen() calls
+  // resolve, so track cancellation: listeners that resolve after cleanup are
+  // unlistened immediately instead of leaking a duplicate set.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisteners: (() => void)[] = [];
+    initStoreListeners().then((fns) => {
+      if (cancelled) {
+        fns.forEach((fn) => fn());
+      } else {
+        unlisteners = fns;
+      }
+    });
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
+      resetListenerGuard();
+    };
+  }, []);
+
   return (
     <TooltipProvider>
       <AppShell>
         <Dashboard />
       </AppShell>
+      <Toaster />
     </TooltipProvider>
   );
 }

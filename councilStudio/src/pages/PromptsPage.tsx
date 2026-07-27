@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -59,20 +59,27 @@ export function PromptsPage() {
     return result;
   }, [promptTemplates, search, category]);
 
-  const openCreate = () => {
+  const openCreate = useCallback(() => {
     setEditingTemplate(null);
     setFormOpen(true);
-  };
+  }, []);
 
-  const openEdit = (template: PromptTemplate) => {
+  const openEdit = useCallback((template: PromptTemplate) => {
     setEditingTemplate(template);
     setFormOpen(true);
-  };
+  }, []);
 
-  const useTemplate = (template: PromptTemplate) => {
-    setPrompt(template.prompt);
-    setCurrentView("home");
-  };
+  const useTemplate = useCallback(
+    (template: PromptTemplate) => {
+      setPrompt(template.prompt);
+      setCurrentView("home");
+    },
+    [setPrompt, setCurrentView]
+  );
+
+  const requestDelete = useCallback((id: string) => {
+    setPendingDeleteId(id);
+  }, []);
 
   return (
     <div className="flex h-full flex-col p-6">
@@ -119,14 +126,13 @@ export function PromptsPage() {
         ) : (
           <div className="grid grid-cols-1 gap-3 pr-2 md:grid-cols-2 xl:grid-cols-3">
             <AnimatePresence>
-              {filtered.map((template, i) => (
+              {filtered.map((template) => (
                 <TemplateCard
                   key={template.id}
                   template={template}
-                  index={i}
-                  onUse={() => useTemplate(template)}
-                  onEdit={() => openEdit(template)}
-                  onDelete={() => setPendingDeleteId(template.id)}
+                  onUse={useTemplate}
+                  onEdit={openEdit}
+                  onDelete={requestDelete}
                 />
               ))}
             </AnimatePresence>
@@ -162,29 +168,27 @@ export function PromptsPage() {
   );
 }
 
-function TemplateCard({
+const TemplateCard = memo(function TemplateCard({
   template,
-  index,
   onUse,
   onEdit,
   onDelete,
 }: {
   template: PromptTemplate;
-  index: number;
-  onUse: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
+  onUse: (template: PromptTemplate) => void;
+  onEdit: (template: PromptTemplate) => void;
+  onDelete: (id: string) => void;
 }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, delay: index * 0.02 }}
+      transition={{ duration: 0.15 }}
       layout
     >
       <Card
-        className="cursor-pointer transition-all hover:shadow-md hover:border-secondary/30 group"
-        onClick={onUse}
+        className="cursor-pointer transition-shadow hover:shadow-md hover:border-secondary/30 group contain-paint"
+        onClick={() => onUse(template)}
       >
         <CardContent className="p-4">
           <div className="flex items-start justify-between gap-2 mb-1.5">
@@ -193,7 +197,7 @@ function TemplateCard({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onEdit();
+                  onEdit(template);
                 }}
                 className="opacity-0 group-hover:opacity-100 transition-opacity"
               >
@@ -202,7 +206,7 @@ function TemplateCard({
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  onDelete();
+                  onDelete(template.id);
                 }}
                 className="opacity-0 group-hover:opacity-100 transition-opacity"
               >
@@ -222,7 +226,7 @@ function TemplateCard({
       </Card>
     </motion.div>
   );
-}
+});
 
 function EmptyState({ hasTemplates, onCreate }: { hasTemplates: boolean; onCreate: () => void }) {
   return (

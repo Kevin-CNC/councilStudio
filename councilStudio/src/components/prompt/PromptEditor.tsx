@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useMemo, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAppStore } from "@/stores/appStore";
+import { useAppStore, selectCurrentPrompt, selectMembers, selectIsRunning, selectJudgeModel, selectJudgeProvider } from "@/stores/appStore";
 import { PromptHistory } from "./PromptHistory";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Provider } from "@/types";
@@ -25,16 +25,14 @@ import {
 const MAX_CHARS = 4000;
 
 export function PromptEditor() {
-  const {
-    currentPrompt,
-    setPrompt,
-    members,
-    isRunning,
-    runCouncil,
-    judgeModel,
-    judgeProvider,
-    setJudge,
-  } = useAppStore();
+  const currentPrompt = useAppStore(selectCurrentPrompt);
+  const members = useAppStore(selectMembers);
+  const isRunning = useAppStore(selectIsRunning);
+  const setPrompt = useAppStore((s) => s.setPrompt);
+  const runCouncil = useAppStore((s) => s.runCouncil);
+  const judgeModel = useAppStore(selectJudgeModel);
+  const judgeProvider = useAppStore(selectJudgeProvider);
+  const setJudge = useAppStore((s) => s.setJudge);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const charCount = currentPrompt.length;
@@ -44,19 +42,23 @@ export function PromptEditor() {
   // Judge options: unique provider/model pairs from the council roster,
   // always including the current selection so it stays selectable.
   const judgeValue = `${judgeProvider}:${judgeModel}`;
-  const judgeOptions = Array.from(
-    new Map(
-      [
-        { provider: judgeProvider, model: judgeModel },
-        ...members.map((m) => ({ provider: m.provider, model: m.model })),
-      ].map((o) => [`${o.provider}:${o.model}`, o])
-    ).values()
+  const judgeOptions = useMemo(
+    () =>
+      Array.from(
+        new Map(
+          [
+            { provider: judgeProvider, model: judgeModel },
+            ...members.map((m) => ({ provider: m.provider, model: m.model })),
+          ].map((o) => [`${o.provider}:${o.model}`, o])
+        ).values()
+      ),
+    [judgeProvider, judgeModel, members]
   );
 
-  const handleRun = () => {
+  const handleRun = useCallback(() => {
     if (!canSubmit) return;
     runCouncil();
-  };
+  }, [canSubmit, runCouncil]);
 
   return (
     <motion.div

@@ -97,8 +97,8 @@ export function MemberForm() {
   const { memberFormOpen, editingMemberId, setMemberFormOpen, members, addMember, updateMember } =
     useAppStore(
       useShallow((s) => ({
-        memberFormOpen: s.ui.memberFormOpen,
-        editingMemberId: s.ui.editingMemberId,
+        memberFormOpen: s.memberFormOpen,
+        editingMemberId: s.editingMemberId,
         setMemberFormOpen: s.setMemberFormOpen,
         members: s.members,
         addMember: s.addMember,
@@ -395,7 +395,7 @@ export function MemberForm() {
                   <button
                     key={c}
                     className={cn(
-                      "h-7 w-7 rounded-full border-2 transition-all",
+                      "h-7 w-7 rounded-full border-2 transition-transform",
                       color === c ? "border-foreground scale-110" : "border-transparent hover:scale-105"
                     )}
                     style={{ backgroundColor: c }}

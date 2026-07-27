@@ -1,38 +1,48 @@
-import { useState } from "react";
-import { useAppStore } from "@/stores/appStore";
+import { useState, useMemo, useCallback } from "react";
+import { useAppStore, selectMembers, selectPersonaStatuses } from "@/stores/appStore";
 import { MemberCard } from "./MemberCard";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Users } from "lucide-react";
 
 export function MemberList() {
-  const { members, setMemberFormOpen, personaStatuses } = useAppStore();
+  const members = useAppStore(selectMembers);
+  const personaStatuses = useAppStore(selectPersonaStatuses);
+  const setMemberFormOpen = useAppStore((s) => s.setMemberFormOpen);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const enabledCount = members.filter((m) => m.enabled).length;
 
-  const handleDragStart = (index: number) => {
-    setDragIndex(index);
-  };
+  const sortedMembers = useMemo(
+    () => [...members].sort((a, b) => a.order - b.order),
+    [members]
+  );
 
-  const handleDragOver = (e: React.DragEvent, index: number) => {
+  const handleDragStart = useCallback((index: number) => {
+    setDragIndex(index);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
     e.preventDefault();
     setDragOverIndex(index);
-  };
+  }, []);
 
-  const handleDrop = (index: number) => {
-    if (dragIndex !== null && dragIndex !== index) {
-      useAppStore.getState().reorderMembers(dragIndex, index);
-    }
+  const handleDrop = useCallback(
+    (index: number) => {
+      if (dragIndex !== null && dragIndex !== index) {
+        useAppStore.getState().reorderMembers(dragIndex, index);
+      }
+      setDragIndex(null);
+      setDragOverIndex(null);
+    },
+    [dragIndex]
+  );
+
+  const handleDragEnd = useCallback(() => {
     setDragIndex(null);
     setDragOverIndex(null);
-  };
-
-  const handleDragEnd = () => {
-    setDragIndex(null);
-    setDragOverIndex(null);
-  };
+  }, []);
 
   return (
     <div className="flex h-full flex-col">
@@ -53,9 +63,7 @@ export function MemberList() {
           <EmptyState />
         ) : (
           <AnimatePresence>
-            {members
-              .sort((a, b) => a.order - b.order)
-              .map((persona, index) => (
+            {sortedMembers.map((persona, index) => (
                 <motion.div
                   key={persona.id}
                   draggable
@@ -71,7 +79,6 @@ export function MemberList() {
                 >
                   <MemberCard
                     persona={persona}
-                    index={index}
                     runStatus={personaStatuses[persona.id]}
                     dragHandleProps={{}}
                   />

@@ -6,8 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { lazy, Suspense } from "react";
 import { motion } from "framer-motion";
 import {
   Copy,
@@ -19,24 +18,19 @@ import {
   Download,
 } from "lucide-react";
 import { formatTokens, formatCost, formatDuration } from "@/lib/utils";
-import type { PersonaResult, Provider } from "@/types";
+import type { PersonaResult } from "@/types";
+import { PROVIDER_LABELS } from "@/lib/constants";
 
-const PROVIDER_LABELS: Record<Provider, string> = {
-  anthropic: "Anthropic",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-  ollama: "Ollama",
-};
+const CodeBlock = lazy(() => import("./CodeBlock"));
 
 interface ResponseCardProps {
   result: PersonaResult;
   streamingContent?: string;
   isStreaming?: boolean;
-  index?: number;
   color?: string;
 }
 
-export function ResponseCard({ result, streamingContent, isStreaming, index = 0, color = "#666" }: ResponseCardProps) {
+export function ResponseCard({ result, streamingContent, isStreaming, color = "#666" }: ResponseCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const content = isStreaming ? streamingContent || "" : result.content;
@@ -53,11 +47,11 @@ export function ResponseCard({ result, streamingContent, isStreaming, index = 0,
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.1 }}
+      transition={{ duration: 0.15 }}
     >
       <Card
         className={cn(
-          "overflow-hidden transition-all",
+          "overflow-hidden transition-shadow contain-paint",
           isError && "border-destructive/50 bg-destructive/5"
         )}
       >
@@ -77,10 +71,7 @@ export function ResponseCard({ result, streamingContent, isStreaming, index = 0,
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold">{result.personaName}</span>
                   {isStreaming && (
-                    <span className="relative flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
-                    </span>
+                    <span className="inline-flex h-2 w-2 rounded-full bg-green-500" title="Streaming" />
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5">
@@ -144,14 +135,15 @@ export function ResponseCard({ result, streamingContent, isStreaming, index = 0,
                     const match = /language-(\w+)/.exec(className || "");
                     const inline = !match;
                     return !inline ? (
-                      <SyntaxHighlighter
-                        style={oneDark}
-                        language={match[1]}
-                        PreTag="div"
-                        className="rounded-lg !text-xs"
-                      >
-                        {String(children).replace(/\n$/, "")}
-                      </SyntaxHighlighter>
+                      <Suspense fallback={
+                        <pre className="rounded-lg bg-muted p-4 overflow-x-auto">
+                          <code className="text-xs">{String(children).replace(/\n$/, "")}</code>
+                        </pre>
+                      }>
+                        <CodeBlock language={match[1]}>
+                          {String(children).replace(/\n$/, "")}
+                        </CodeBlock>
+                      </Suspense>
                     ) : (
                       <code className={cn("rounded bg-muted px-1.5 py-0.5 text-xs", className)} {...props}>
                         {children}
@@ -163,7 +155,7 @@ export function ResponseCard({ result, streamingContent, isStreaming, index = 0,
                 {content}
               </ReactMarkdown>
               {isStreaming && (
-                <span className="inline-block w-2 h-4 bg-foreground animate-pulse ml-0.5" />
+                <span className="inline-block w-2 h-4 bg-foreground animate-blink-3 ml-0.5" />
               )}
             </div>
           )}

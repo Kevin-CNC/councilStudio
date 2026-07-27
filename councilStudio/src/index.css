@@ -64,3 +64,58 @@
   --color-input: hsl(222 16% 22%);
   --color-ring: hsl(207 68% 55%);
 }
+
+/* Performance: CSS containment utilities */
+.contain-paint {
+  contain: layout paint;
+}
+.contain-strict {
+  contain: strict;
+}
+
+/* Streaming cursor — blinks 3 times then stops */
+@keyframes blink {
+  50% { opacity: 0; }
+}
+.animate-blink-3 {
+  animation: blink 1s step-end 3;
+}
+
+/* Toast entry — slide in from the right with a fade */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.toast-in {
+  animation: toast-in 0.2s ease-out;
+}
+
+/* Toast countdown bar — keep duration in sync with AUTO_DISMISS_MS in toaster.tsx */
+@keyframes toast-progress {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+.toast-progress {
+  animation: toast-progress 5s linear forwards;
+}
+
+/* Respect user's motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

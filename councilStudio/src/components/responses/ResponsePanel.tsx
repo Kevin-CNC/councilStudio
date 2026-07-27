@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,7 @@ export function ResponsePanel() {
     useAppStore(
       useShallow((s) => ({
         activeRun: s.activeRun,
-        activeTab: s.ui.activeTab,
+        activeTab: s.activeTab,
         setActiveTab: s.setActiveTab,
         isRunning: s.isRunning,
         judgeStatus: s.judgeStatus,
@@ -55,7 +56,10 @@ export function ResponsePanel() {
   }
 
   const judgeResult = activeRun.judgeResult;
-  const results = activeRun.personaResults;
+  const results = useMemo(
+    () => Object.values(activeRun.personaResults),
+    [activeRun.personaResults]
+  );
 
   return (
     <div id="response-panel-content" className="flex h-full flex-col">
@@ -251,8 +255,8 @@ function ResponsesTab({ results, members, personaStatuses }: any) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {results.map((r: any, i: number) => (
-        <ResponseCard key={r.personaId} result={r} index={i} color={r.provider === "anthropic" ? "#17B890" : "#228CDB"} />
+      {results.map((r: any) => (
+        <ResponseCard key={r.personaId} result={r} color={r.provider === "anthropic" ? "#17B890" : "#228CDB"} />
       ))}
       {pending.map((m: any) => (
         <Card key={m.id} className="overflow-hidden">
@@ -436,12 +440,12 @@ function TimelineTab({ results }: any) {
 
   return (
     <div className="space-y-1">
-      {sorted.map((r, i) => (
+      {sorted.map((r) => (
         <motion.div
           key={r.personaId}
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: i * 0.05 }}
+          transition={{ duration: 0.15 }}
           className="flex gap-3 pb-4"
         >
           <div className="flex flex-col items-center">

@@ -7,6 +7,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAppStore } from "@/stores/appStore";
+import { KIND_STYLES, useToastStore } from "@/components/ui/toaster";
 import { useShallow } from "zustand/react/shallow";
 import {
   Search,
@@ -18,10 +19,18 @@ import {
   Menu,
 } from "lucide-react";
 
+function timeAgo(ts: number): string {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
+}
+
 export function Header() {
   const { theme, setTheme, setSettingsOpen, toggleSidebar } = useAppStore(
     useShallow((s) => ({
-      theme: s.ui.theme,
+      theme: s.theme,
       setTheme: s.setTheme,
       setSettingsOpen: s.setSettingsOpen,
       toggleSidebar: s.toggleSidebar,
@@ -29,6 +38,15 @@ export function Header() {
   );
 
   const themeIcon = theme === "dark" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />;
+
+  const { history, markRead, clearHistory } = useToastStore(
+    useShallow((s) => ({
+      history: s.history,
+      markRead: s.markRead,
+      clearHistory: s.clearHistory,
+    }))
+  );
+  const unreadCount = history.length;
 
   return (
     <header id="app-header" className="flex h-14 items-center gap-4 border-b border-border bg-card px-4">
@@ -90,10 +108,65 @@ export function Header() {
         </DropdownMenu>
 
         {/* Notifications */}
-        <Button id="header-notifications-button" variant="ghost" size="icon" className="relative text-muted-foreground">
-          <Bell className="h-4 w-4" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-destructive" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button id="header-notifications-button" variant="ghost" size="icon" className="relative text-muted-foreground">
+              <Bell className="h-4 w-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-80 p-0">
+            <div className="flex items-center justify-between border-b border-border px-3 py-2">
+              <span className="text-sm font-medium">Notifications</span>
+              <button
+                onClick={clearHistory}
+                disabled={history.length === 0}
+                className="text-xs text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                Clear all
+              </button>
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              {history.length === 0 ? (
+                <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                  No notifications
+                </p>
+              ) : (
+                history.map((n) => {
+                  const { icon: Icon, className } = KIND_STYLES[n.kind];
+                  return (
+                    <div
+                      key={n.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => markRead(n.id)}
+                      onKeyDown={(e) => e.key === "Enter" && markRead(n.id)}
+                      title="Click to mark as read"
+                      className="flex cursor-pointer items-start gap-3 border-b border-border px-3 py-2 transition-colors last:border-b-0 hover:bg-muted"
+                    >
+                      <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${className}`} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium leading-tight">{n.title}</p>
+                        {n.description && (
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                            {n.description}
+                          </p>
+                        )}
+                      </div>
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {timeAgo(n.createdAt)}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {/* Settings */}
         <Button

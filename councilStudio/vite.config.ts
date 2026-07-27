@@ -17,6 +17,20 @@ export default defineConfig(async () => ({
   },
 
   clearScreen: false,
+
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom", "zustand"],
+          ui: ["framer-motion", "lucide-react"],
+          markdown: ["react-markdown", "react-syntax-highlighter"],
+        },
+      },
+    },
+  },
+
   server: {
     port: 1420,
     strictPort: true,
