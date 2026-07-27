@@ -96,6 +96,19 @@
   animation: toast-in 0.2s ease-out;
 }
 
+/* Toast countdown bar — keep duration in sync with AUTO_DISMISS_MS in toaster.tsx */
+@keyframes toast-progress {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+.toast-progress {
+  animation: toast-progress 5s linear forwards;
+}
+
 /* Respect user's motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,
