@@ -2,6 +2,11 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 struct OpenRouterModelInfo {
+    data: Option<OpenRouterModelData>,
+}
+
+#[derive(Deserialize)]
+struct OpenRouterModelData {
     architecture: Option<Architecture>,
 }
 
@@ -103,7 +108,7 @@ pub async fn run_compatibility_check(
                         }
                         Ok(info) => {
                             let empty: Vec<String> = Vec::new();
-                            let arch = info.architecture.as_ref();
+                            let arch = info.data.as_ref().and_then(|d| d.architecture.as_ref());
                             let input_mods = arch.map(|a| &a.input_modalities).unwrap_or(&empty);
                             let output_mods = arch.map(|a| &a.output_modalities).unwrap_or(&empty);
 
