@@ -31,6 +31,27 @@ export interface ProviderCredential {
   isActive: boolean;
 }
 
+export interface MemberCompatibilityCheck {
+  personaId: string;
+  personaName: string;
+  provider: Provider;
+  model: string;
+  compatible: boolean;
+  issues: string[];
+}
+
+export interface CompatibilityCheckResult {
+  checks: MemberCompatibilityCheck[];
+  incompatibleCount: number;
+  failedRequestsCount: number;
+}
+
+export interface CompatibilityCheckRequest {
+  members: { id: string; name: string; provider: Provider; model: string }[];
+  requiredInputModalities: string[];
+  requiredOutputModalities: string[];
+}
+
 export interface CouncilConfig {
   id: string;
   name: string;
