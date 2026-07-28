@@ -7,6 +7,8 @@ import type {
   Session,
   CouncilRun,
   PromptTemplate,
+  CompatibilityCheckRequest,
+  CompatibilityCheckResult,
 } from "@/types";
 
 /**
@@ -81,6 +83,16 @@ export async function runCouncil(
  */
 export async function cancelRun(): Promise<void> {
   return invoke<void>("cancel_run");
+}
+
+/**
+ * Pre-flight check: verify each member's model supports the required
+ * input/output modalities via OpenRouter's public model-info API.
+ */
+export async function checkModelCompatibility(
+  request: CompatibilityCheckRequest
+): Promise<CompatibilityCheckResult> {
+  return invoke<CompatibilityCheckResult>("check_model_compatibility", { request });
 }
 
 /**
