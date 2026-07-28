@@ -1018,6 +1018,14 @@ pub fn save_api_key(
     crate::secrets::save_key(&app_data_dir, &request.provider, &request.key)
 }
 
+/// Check whether each member's model supports the required input/output modalities.
+#[tauri::command]
+pub async fn check_model_compatibility(
+    request: crate::compatibility::CompatibilityCheckRequest,
+) -> Result<crate::compatibility::CompatibilityCheckResult, String> {
+    crate::compatibility::run_compatibility_check(request).await
+}
+
 /// Return which providers have API keys configured.
 #[tauri::command]
 pub fn get_api_keys(app_handle: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
