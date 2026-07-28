@@ -1,4 +1,4 @@
-import { useRef, useMemo, useCallback } from "react";
+import { useRef, useMemo, useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,8 +11,11 @@ import {
 } from "@/components/ui/select";
 import { useAppStore, selectCurrentPrompt, selectMembers, selectIsRunning, selectJudgeModel, selectJudgeProvider } from "@/stores/appStore";
 import { PromptHistory } from "./PromptHistory";
+import { CompatibilityWarningDialog } from "./CompatibilityWarningDialog";
+import { checkModelCompatibility } from "@/lib/tauri-bridge";
+import { toast } from "@/components/ui/toaster";
 import { motion, AnimatePresence } from "framer-motion";
-import type { Provider } from "@/types";
+import type { MemberCompatibilityCheck, Provider } from "@/types";
 import {
   Play,
   Square,
@@ -36,7 +39,10 @@ export function PromptEditor() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const charCount = currentPrompt.length;
-  const canSubmit = currentPrompt.trim().length > 0 && !isRunning;
+  const [isChecking, setIsChecking] = useState(false);
+  const [compatDialogOpen, setCompatDialogOpen] = useState(false);
+  const [incompatibleChecks, setIncompatibleChecks] = useState<MemberCompatibilityCheck[]>([]);
+  const canSubmit = currentPrompt.trim().length > 0 && !isRunning && !isChecking;
   const enabledCount = members.filter((m) => m.enabled).length;
 
   // Judge options: unique provider/model pairs from the council roster,
@@ -55,10 +61,38 @@ export function PromptEditor() {
     [judgeProvider, judgeModel, members]
   );
 
-  const handleRun = useCallback(() => {
+  const handleRun = useCallback(async () => {
     if (!canSubmit) return;
-    runCouncil();
-  }, [canSubmit, runCouncil]);
+
+    setIsChecking(true);
+    try {
+      const enabledMembers = members.filter((m) => m.enabled);
+      const result = await checkModelCompatibility({
+        members: enabledMembers.map((m) => ({
+          id: m.id,
+          name: m.name,
+          provider: m.provider,
+          model: m.model,
+        })),
+        requiredInputModalities: ["text"],
+        requiredOutputModalities: ["text"],
+      });
+
+      const incompatible = result.checks.filter((c) => !c.compatible);
+      if (incompatible.length > 0) {
+        setIncompatibleChecks(incompatible);
+        setCompatDialogOpen(true);
+      } else {
+        runCouncil();
+      }
+    } catch (err) {
+      console.error("Compatibility check failed:", err);
+      toast("info", "Compatibility check failed", "Running without a pre-flight check.");
+      runCouncil();
+    } finally {
+      setIsChecking(false);
+    }
+  }, [canSubmit, members, runCouncil]);
 
   return (
     <motion.div
@@ -184,6 +218,16 @@ export function PromptEditor() {
           )}
         </AnimatePresence>
       </div>
+
+      <CompatibilityWarningDialog
+        open={compatDialogOpen}
+        onOpenChange={setCompatDialogOpen}
+        checks={incompatibleChecks}
+        onRunAnyway={() => {
+          setCompatDialogOpen(false);
+          runCouncil();
+        }}
+      />
     </motion.div>
   );
 }
