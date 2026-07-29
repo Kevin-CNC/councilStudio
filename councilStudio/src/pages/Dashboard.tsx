@@ -2,6 +2,8 @@ import { lazy, Suspense } from "react";
 import { useAppStore, selectIsLoading, selectError, selectCurrentView } from "@/stores/appStore";
 import { MemberList } from "@/components/council/MemberList";
 import { MemberForm } from "@/components/council/MemberForm";
+import { MembersPanel } from "@/components/council/MembersPanel";
+import { SwapMemberDialog } from "@/components/council/SwapMemberDialog";
 import { PromptEditor } from "@/components/prompt/PromptEditor";
 import { SessionList } from "@/components/sessions/SessionList";
 import { ResponsePanelDock } from "@/components/responses/ResponsePanelDock";
@@ -67,7 +69,7 @@ export function Dashboard() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.3 }}
-                className="order-2 xl:order-1"
+                className="order-2 xl:order-1 min-h-0 overflow-hidden"
               >
                 <MemberList />
               </motion.div>
@@ -103,6 +105,8 @@ export function Dashboard() {
 
       {/* Slide-over panels */}
       <MemberForm />
+      <MembersPanel />
+      <SwapMemberDialog />
       <SettingsPanel />
       <ApiKeysPanel />
     </>

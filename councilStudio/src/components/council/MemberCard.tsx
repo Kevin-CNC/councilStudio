@@ -19,6 +19,7 @@ import {
   XCircle,
   Clock,
   Ban,
+  ArrowLeftRight,
 } from "lucide-react";
 import { memo, useState } from "react";
 import {
@@ -78,6 +79,7 @@ export const MemberCard = memo(function MemberCard({ persona, runStatus, dragHan
   const deleteMember = useAppStore((s) => s.deleteMember);
   const duplicateMember = useAppStore((s) => s.duplicateMember);
   const toggleMemberEnabled = useAppStore((s) => s.toggleMemberEnabled);
+  const setSwapTargetId = useAppStore((s) => s.setSwapTargetId);
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -190,6 +192,9 @@ export const MemberCard = memo(function MemberCard({ persona, runStatus, dragHan
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => duplicateMember(persona.id)}>
                     <Copy className="h-3.5 w-3.5 mr-2" /> Duplicate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSwapTargetId(persona.id)}>
+                    <ArrowLeftRight className="h-3.5 w-3.5 mr-2" /> Swap
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => deleteMember(persona.id)}

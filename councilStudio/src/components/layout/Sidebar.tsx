@@ -17,6 +17,7 @@ import {
   PanelLeftClose,
   PanelLeft,
   Compass,
+  UserCircle,
 } from "lucide-react";
 
 interface NavItem {
@@ -28,6 +29,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: "council", label: "Council", icon: Users, badge: "6" },
+  { id: "members", label: "Members", icon: UserCircle },
   { id: "prompts", label: "Prompts", icon: MessageSquare },
   { id: "sessions", label: "Sessions", icon: History },
   { id: "knowledge", label: "Knowledge Base", icon: BookOpen },
@@ -42,7 +44,7 @@ const BOTTOM_ITEMS: NavItem[] = [
 ];
 
 export function Sidebar() {
-  const { sidebarOpen, currentView, toggleSidebar, setSettingsOpen, setApiKeysOpen, setCurrentView } = useAppStore(
+  const { sidebarOpen, currentView, toggleSidebar, setSettingsOpen, setApiKeysOpen, setCurrentView, setMembersPanelOpen } = useAppStore(
     useShallow((s) => ({
       sidebarOpen: s.sidebarOpen,
       currentView: s.currentView,
@@ -50,6 +52,7 @@ export function Sidebar() {
       setSettingsOpen: s.setSettingsOpen,
       setApiKeysOpen: s.setApiKeysOpen,
       setCurrentView: s.setCurrentView,
+      setMembersPanelOpen: s.setMembersPanelOpen,
     }))
   );
 
@@ -59,13 +62,15 @@ export function Sidebar() {
         setSettingsOpen(true);
       } else if (id === "api-keys") {
         setApiKeysOpen(true);
+      } else if (id === "members") {
+        setMembersPanelOpen(true);
       } else if (id === "home" || id === "council") {
         setCurrentView("home");
       } else if (id === "prompts" || id === "sessions") {
         setCurrentView(id);
       }
     },
-    [setSettingsOpen, setApiKeysOpen, setCurrentView]
+    [setSettingsOpen, setApiKeysOpen, setCurrentView, setMembersPanelOpen]
   );
 
   const isActive = (id: string) =>
