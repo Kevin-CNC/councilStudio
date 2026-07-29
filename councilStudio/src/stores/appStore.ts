@@ -59,6 +59,8 @@ interface AppState {
   apiKeysOpen: boolean;
   memberFormOpen: boolean;
   editingMemberId: string | null;
+  membersPanelOpen: boolean;
+  swapTargetId: string | null;
   activeTab: TabId;
   selectedSessionId: string | null;
   responsePanelHeight: number;
@@ -73,6 +75,8 @@ interface AppState {
   reorderMembers: (fromIndex: number, toIndex: number) => Promise<void>;
   duplicateMember: (id: string) => Promise<void>;
   toggleMemberEnabled: (id: string) => Promise<void>;
+  deleteMembers: (ids: string[]) => Promise<void>;
+  swapMember: (outId: string, inId: string) => Promise<void>;
 
   // Actions - Prompt
   setPrompt: (prompt: string) => void;
@@ -106,6 +110,8 @@ interface AppState {
   setSettingsOpen: (open: boolean) => void;
   setApiKeysOpen: (open: boolean) => void;
   setMemberFormOpen: (open: boolean, editingId?: string | null) => void;
+  setMembersPanelOpen: (open: boolean) => void;
+  setSwapTargetId: (id: string | null) => void;
   setActiveTab: (tab: TabId) => void;
   setResponsePanelHeight: (height: number) => void;
   toggleResponsePanelCollapsed: () => void;
@@ -140,6 +146,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   apiKeysOpen: false,
   memberFormOpen: false,
   editingMemberId: null,
+  membersPanelOpen: false,
+  swapTargetId: null,
   activeTab: "overview",
   selectedSessionId: null,
   responsePanelHeight: 380,
@@ -265,6 +273,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     const member = get().members.find((m) => m.id === id);
     if (!member) return;
     await get().updateMember(id, { enabled: !member.enabled });
+  },
+
+  deleteMembers: async (ids) => {
+    await Promise.all(ids.map((id) => get().deleteMember(id)));
+  },
+
+  swapMember: async (outId, inId) => {
+    await Promise.all([
+      get().updateMember(outId, { enabled: false }),
+      get().updateMember(inId, { enabled: true }),
+    ]);
   },
 
   // --- Prompt actions ---
@@ -502,6 +521,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMemberFormOpen: (open, editingId = null) =>
     set({ memberFormOpen: open, editingMemberId: editingId }),
 
+  setMembersPanelOpen: (open) => set({ membersPanelOpen: open }),
+
+  setSwapTargetId: (id) => set({ swapTargetId: id }),
+
   setActiveTab: (tab) => set({ activeTab: tab }),
 
   setResponsePanelHeight: (height) => set({ responsePanelHeight: height }),
@@ -527,6 +550,8 @@ export const selectJudgeStatus = (s: AppState) => s.judgeStatus;
 export const selectIsLoading = (s: AppState) => s.isLoading;
 export const selectError = (s: AppState) => s.error;
 export const selectSidebarOpen = (s: AppState) => s.sidebarOpen;
+export const selectMembersPanelOpen = (s: AppState) => s.membersPanelOpen;
+export const selectSwapTargetId = (s: AppState) => s.swapTargetId;
 export const selectCurrentView = (s: AppState) => s.currentView;
 export const selectActiveTab = (s: AppState) => s.activeTab;
 export const selectTheme = (s: AppState) => s.theme;

@@ -86,18 +86,18 @@ export function MemberList() {
               ))}
           </AnimatePresence>
         )}
-      </div>
 
-      {/* Add button */}
-      <AddMemberPopover>
-        <Button
-          variant="outline"
-          className="mt-3 w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
-        >
-          <Plus className="h-4 w-4" />
-          Add Council Member
-        </Button>
-      </AddMemberPopover>
+        {/* Add button — sits right after the last member and scrolls with the list */}
+        <AddMemberPopover>
+          <Button
+            variant="outline"
+            className="mt-1 w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
+          >
+            <Plus className="h-4 w-4" />
+            Add Council Member
+          </Button>
+        </AddMemberPopover>
+      </div>
     </div>
   );
 }
