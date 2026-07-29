@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useAppStore, selectMembers, selectPersonaStatuses } from "@/stores/appStore";
 import { MemberCard } from "./MemberCard";
+import { AddMemberPopover } from "./AddMemberPopover";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Users } from "lucide-react";
@@ -8,7 +9,6 @@ import { Plus, Users } from "lucide-react";
 export function MemberList() {
   const members = useAppStore(selectMembers);
   const personaStatuses = useAppStore(selectPersonaStatuses);
-  const setMemberFormOpen = useAppStore((s) => s.setMemberFormOpen);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
 
@@ -45,7 +45,7 @@ export function MemberList() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between px-1 mb-3">
         <div className="flex items-center gap-2">
@@ -89,14 +89,15 @@ export function MemberList() {
       </div>
 
       {/* Add button */}
-      <Button
-        variant="outline"
-        className="mt-3 w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
-        onClick={() => setMemberFormOpen(true)}
-      >
-        <Plus className="h-4 w-4" />
-        Add Council Member
-      </Button>
+      <AddMemberPopover>
+        <Button
+          variant="outline"
+          className="mt-3 w-full justify-start gap-2 text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="h-4 w-4" />
+          Add Council Member
+        </Button>
+      </AddMemberPopover>
     </div>
   );
 }
