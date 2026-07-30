@@ -187,3 +187,31 @@ export interface ModelOption {
   costPer1kIn: number;
   costPer1kOut: number;
 }
+
+// --- Export/Import types ---
+
+export interface MemberExportItem {
+  Name: string;
+  provider: Provider;
+  model: string;
+  sys_prompt: string;
+  member_color: string;
+  reasoning: string;
+  max_tkns: number;
+  temperature: number;
+}
+
+export interface MemberExportFile {
+  members: MemberExportItem[];
+}
+
+export interface TemplateExportItem {
+  Name: string;
+  desc: string;
+  prompt: string;
+  category: string;
+}
+
+export interface TemplateExportFile {
+  templates: TemplateExportItem[];
+}
