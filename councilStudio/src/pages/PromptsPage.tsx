@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, memo } from "react";
+import { useState, useMemo, useCallback, memo, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,22 +19,53 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { PromptTemplateForm } from "@/components/prompt/PromptTemplateForm";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
+import { toast } from "@/components/ui/toaster";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Pencil, Trash2, MessageSquare } from "lucide-react";
-import type { PromptTemplate } from "@/types";
+import { Search, Plus, Pencil, Trash2, MessageSquare, Download, Upload } from "lucide-react";
+import type { PromptTemplate, MemberExportItem, TemplateExportItem } from "@/types";
+
+/** Download a JSON string as a file in the browser. */
+function downloadJSON(filename: string, json: string) {
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 const CATEGORIES = ["all", "general", "brainstorming", "analysis", "review", "custom"];
 
 export function PromptsPage() {
-  const { promptTemplates, setPrompt, setCurrentView, removePromptTemplate } = useAppStore(
+  const {
+    promptTemplates,
+    setPrompt,
+    setCurrentView,
+    removePromptTemplate,
+    exportTemplatesToJSON,
+    setImportPreviewOpen,
+    setImportPreviewData,
+  } = useAppStore(
     useShallow((s) => ({
       promptTemplates: s.promptTemplates,
       setPrompt: s.setPrompt,
       setCurrentView: s.setCurrentView,
       removePromptTemplate: s.removePromptTemplate,
+      exportTemplatesToJSON: s.exportTemplatesToJSON,
+      setImportPreviewOpen: s.setImportPreviewOpen,
+      setImportPreviewData: s.setImportPreviewData,
     }))
   );
 
@@ -43,6 +74,9 @@ export function PromptsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<PromptTemplate | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportTitle, setExportTitle] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
     let result = [...promptTemplates];
@@ -81,6 +115,56 @@ export function PromptsPage() {
     setPendingDeleteId(id);
   }, []);
 
+  const handleExport = useCallback(() => {
+    if (!exportTitle.trim()) return;
+    const json = exportTemplatesToJSON(exportTitle.trim());
+    const filename = `${exportTitle.trim()}-${todayStr()}.json`;
+    downloadJSON(filename, json);
+    setExportDialogOpen(false);
+    setExportTitle("");
+    toast("success", `Exported ${promptTemplates.length} template${promptTemplates.length === 1 ? "" : "s"}`);
+  }, [exportTitle, exportTemplatesToJSON, promptTemplates.length]);
+
+  const handleImportFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+
+      const file = files[0];
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(reader.result as string);
+          if (parsed.templates && Array.isArray(parsed.templates)) {
+            setImportPreviewData({
+              type: "templates",
+              items: parsed.templates as TemplateExportItem[],
+              fileName: file.name,
+            });
+            setImportPreviewOpen(true);
+          } else if (parsed.members && Array.isArray(parsed.members)) {
+            setImportPreviewData({
+              type: "members",
+              items: parsed.members as MemberExportItem[],
+              fileName: file.name,
+            });
+            setImportPreviewOpen(true);
+          } else {
+            toast("error", "Invalid file format", "Expected 'templates' or 'members' array.");
+          }
+        } catch {
+          toast("error", "Invalid JSON file", "Could not parse the selected file.");
+        }
+      };
+      reader.onerror = () => {
+        toast("error", "Failed to read file");
+      };
+      reader.readAsText(file);
+      e.target.value = "";
+    },
+    [setImportPreviewData, setImportPreviewOpen]
+  );
+
   return (
     <div className="flex h-full flex-col p-6">
       <div className="mb-4 flex items-center justify-between">
@@ -90,10 +174,38 @@ export function PromptsPage() {
             {promptTemplates.length} template{promptTemplates.length === 1 ? "" : "s"}
           </p>
         </div>
-        <Button onClick={openCreate} className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          New Template
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => setExportDialogOpen(true)}
+            disabled={promptTemplates.length === 0}
+          >
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Upload className="h-4 w-4" />
+            Import
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={handleImportFile}
+          />
+          <Button onClick={openCreate} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            New Template
+          </Button>
+        </div>
       </div>
 
       <div className="mb-4 flex gap-2">
@@ -160,6 +272,38 @@ export function PromptsPage() {
               }}
             >
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Export title dialog */}
+      <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Export Templates</DialogTitle>
+            <DialogDescription>
+              Enter a name for the export file.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="export-title">Title</Label>
+            <Input
+              id="export-title"
+              placeholder="My Prompt Templates"
+              value={exportTitle}
+              onChange={(e) => setExportTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleExport();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExportDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleExport} disabled={!exportTitle.trim()}>
+              Export
             </Button>
           </DialogFooter>
         </DialogContent>
