@@ -44,7 +44,7 @@ const BOTTOM_ITEMS: NavItem[] = [
 ];
 
 export function Sidebar() {
-  const { sidebarOpen, currentView, toggleSidebar, setSettingsOpen, setApiKeysOpen, setCurrentView, setMembersPanelOpen } = useAppStore(
+  const { sidebarOpen, currentView, toggleSidebar, setSettingsOpen, setApiKeysOpen, setCurrentView } = useAppStore(
     useShallow((s) => ({
       sidebarOpen: s.sidebarOpen,
       currentView: s.currentView,
@@ -52,7 +52,6 @@ export function Sidebar() {
       setSettingsOpen: s.setSettingsOpen,
       setApiKeysOpen: s.setApiKeysOpen,
       setCurrentView: s.setCurrentView,
-      setMembersPanelOpen: s.setMembersPanelOpen,
     }))
   );
 
@@ -63,18 +62,18 @@ export function Sidebar() {
       } else if (id === "api-keys") {
         setApiKeysOpen(true);
       } else if (id === "members") {
-        setMembersPanelOpen(true);
+        setCurrentView("members");
       } else if (id === "home" || id === "council") {
         setCurrentView("home");
       } else if (id === "prompts" || id === "sessions") {
         setCurrentView(id);
       }
     },
-    [setSettingsOpen, setApiKeysOpen, setCurrentView, setMembersPanelOpen]
+    [setSettingsOpen, setApiKeysOpen, setCurrentView]
   );
 
   const isActive = (id: string) =>
-    id === currentView || (currentView === "home" && id === "council");
+    id === currentView || (currentView === "home" && id === "council") || (id === "members" && currentView === "members");
 
   return (
     <aside
