@@ -10,12 +10,14 @@ import type {
   Theme,
   Provider,
   MemberRunStatus,
+  MemberExportItem,
+  TemplateExportItem,
 } from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
 import { toast } from "@/components/ui/toaster";
 
 type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
-type ViewId = "home" | "prompts" | "sessions";
+type ViewId = "home" | "prompts" | "sessions" | "members";
 
 /** Internal active run — personaResults stored as Record for O(1) streaming updates. */
 export type ActiveRun = Omit<CouncilRun, "personaResults"> & {
@@ -66,6 +68,10 @@ interface AppState {
   responsePanelHeight: number;
   responsePanelCollapsed: boolean;
   currentView: ViewId;
+  importPreviewOpen: boolean;
+  importPreviewData: { type: "members" | "templates"; items: MemberExportItem[] | TemplateExportItem[]; fileName: string } | null;
+  setImportPreviewOpen: (open: boolean) => void;
+  setImportPreviewData: (data: AppState["importPreviewData"]) => void;
 
   // Actions - Members
   loadMembers: () => Promise<void>;
@@ -77,6 +83,10 @@ interface AppState {
   toggleMemberEnabled: (id: string) => Promise<void>;
   deleteMembers: (ids: string[]) => Promise<void>;
   swapMember: (outId: string, inId: string) => Promise<void>;
+  exportMembersToJSON: (title: string) => string;
+  exportTemplatesToJSON: (title: string) => string;
+  importMembers: (items: MemberExportItem[]) => Promise<{ imported: number; errors: string[] }>;
+  importTemplates: (items: TemplateExportItem[]) => Promise<{ imported: number; errors: string[] }>;
 
   // Actions - Prompt
   setPrompt: (prompt: string) => void;
@@ -153,6 +163,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   responsePanelHeight: 380,
   responsePanelCollapsed: false,
   currentView: "home",
+  importPreviewOpen: false,
+  importPreviewData: null,
 
   // --- Member actions (async, backed by SQLite via Tauri) ---
 
@@ -284,6 +296,78 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().updateMember(outId, { enabled: false }),
       get().updateMember(inId, { enabled: true }),
     ]);
+  },
+
+  exportMembersToJSON: (_title) => {
+    const members = get().members;
+    const items: MemberExportItem[] = members.map((m) => ({
+      Name: m.name,
+      provider: m.provider,
+      model: m.model,
+      sys_prompt: m.systemPrompt,
+      member_color: m.color,
+      reasoning: m.reasoningLevel || "medium",
+      max_tkns: m.maxTokens,
+      temperature: m.temperature,
+    }));
+    const file: { members: MemberExportItem[] } = { members: items };
+    return JSON.stringify(file, null, 2);
+  },
+
+  exportTemplatesToJSON: (_title) => {
+    const templates = get().promptTemplates;
+    const items: TemplateExportItem[] = templates.map((t) => ({
+      Name: t.name,
+      desc: t.description,
+      prompt: t.prompt,
+      category: t.category,
+    }));
+    const file: { templates: TemplateExportItem[] } = { templates: items };
+    return JSON.stringify(file, null, 2);
+  },
+
+  importMembers: async (items) => {
+    const errors: string[] = [];
+    let imported = 0;
+    for (const item of items) {
+      try {
+        await get().addMember({
+          name: item.Name || "Unnamed",
+          provider: item.provider,
+          model: item.model,
+          systemPrompt: item.sys_prompt || "",
+          temperature: item.temperature ?? 0.7,
+          maxTokens: item.max_tkns ?? 4096,
+          enabled: true,
+          streaming: true,
+          color: item.member_color || "#6366f1",
+          reasoningLevel: (item.reasoning as "none" | "low" | "medium" | "high") || "medium",
+        });
+        imported++;
+      } catch (e) {
+        errors.push(`${item.Name || "Unknown"}: ${String(e)}`);
+      }
+    }
+    return { imported, errors };
+  },
+
+  importTemplates: async (items) => {
+    const errors: string[] = [];
+    let imported = 0;
+    for (const item of items) {
+      try {
+        await get().savePromptTemplate({
+          name: item.Name || "Unnamed",
+          description: item.desc || "",
+          prompt: item.prompt || "",
+          category: item.category || "custom",
+        });
+        imported++;
+      } catch (e) {
+        errors.push(`${item.Name || "Unknown"}: ${String(e)}`);
+      }
+    }
+    return { imported, errors };
   },
 
   // --- Prompt actions ---
@@ -533,6 +617,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ responsePanelCollapsed: !state.responsePanelCollapsed })),
 
   setCurrentView: (view) => set({ currentView: view }),
+
+  setImportPreviewOpen: (open) => set({ importPreviewOpen: open }),
+
+  setImportPreviewData: (data) => set({ importPreviewData: data }),
 }));
 
 // ---------------------------------------------------------------------------
@@ -557,6 +645,8 @@ export const selectActiveTab = (s: AppState) => s.activeTab;
 export const selectTheme = (s: AppState) => s.theme;
 export const selectJudgeModel = (s: AppState) => s.judgeModel;
 export const selectJudgeProvider = (s: AppState) => s.judgeProvider;
+export const selectImportPreviewOpen = (s: AppState) => s.importPreviewOpen;
+export const selectImportPreviewData = (s: AppState) => s.importPreviewData;
 export const selectPersonaResultsArray = (s: AppState) =>
   s.activeRun ? Object.values(s.activeRun.personaResults) : [];
 
