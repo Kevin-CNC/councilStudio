@@ -12,6 +12,7 @@ import {
 import { useAppStore, selectCurrentPrompt, selectMembers, selectIsRunning, selectJudgeModel, selectJudgeProvider } from "@/stores/appStore";
 import { PromptHistory } from "./PromptHistory";
 import { CompatibilityWarningDialog } from "./CompatibilityWarningDialog";
+import { JudgeConfigDialog } from "./JudgeConfigDialog";
 import { checkModelCompatibility } from "@/lib/tauri-bridge";
 import { toast } from "@/components/ui/toaster";
 import { motion, AnimatePresence } from "framer-motion";
@@ -41,9 +42,11 @@ export function PromptEditor() {
   const charCount = currentPrompt.length;
   const [isChecking, setIsChecking] = useState(false);
   const [compatDialogOpen, setCompatDialogOpen] = useState(false);
+  const [judgeConfigOpen, setJudgeConfigOpen] = useState(false);
   const [incompatibleChecks, setIncompatibleChecks] = useState<MemberCompatibilityCheck[]>([]);
   const canSubmit = currentPrompt.trim().length > 0 && !isRunning && !isChecking;
   const enabledCount = members.filter((m) => m.enabled).length;
+  const judgeConfigured = judgeModel.trim().length > 0;
 
   // Judge options: unique provider/model pairs from the council roster,
   // always including the current selection so it stays selectable.
@@ -53,16 +56,22 @@ export function PromptEditor() {
       Array.from(
         new Map(
           [
-            { provider: judgeProvider, model: judgeModel },
+            ...(judgeConfigured ? [{ provider: judgeProvider, model: judgeModel }] : []),
             ...members.map((m) => ({ provider: m.provider, model: m.model })),
           ].map((o) => [`${o.provider}:${o.model}`, o])
         ).values()
       ),
-    [judgeProvider, judgeModel, members]
+    [judgeProvider, judgeModel, judgeConfigured, members]
   );
 
   const handleRun = useCallback(async () => {
     if (!canSubmit) return;
+
+    if (!judgeConfigured) {
+      toast("info", "No judge configured", "Set a judge model before running the council.");
+      setJudgeConfigOpen(true);
+      return;
+    }
 
     setIsChecking(true);
     try {
@@ -92,7 +101,7 @@ export function PromptEditor() {
     } finally {
       setIsChecking(false);
     }
-  }, [canSubmit, members, runCouncil]);
+  }, [canSubmit, judgeConfigured, members, runCouncil]);
 
   return (
     <motion.div
@@ -147,7 +156,7 @@ export function PromptEditor() {
         </Button>
 
         <PromptHistory onSelect={(prompt) => setPrompt(prompt)}>
-          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground">
+          <Button id="prompt-history-button" variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground">
             <BookOpen className="h-3.5 w-3.5" />
             Templates
           </Button>
@@ -155,31 +164,51 @@ export function PromptEditor() {
 
         <div className="flex-1" />
 
-        {/* Judge model selector */}
-        <Select
-          value={judgeValue}
-          onValueChange={(v) => {
-            const [provider, ...rest] = v.split(":");
-            setJudge(rest.join(":"), provider as Provider);
-          }}
-          disabled={isRunning}
-        >
-          <SelectTrigger className="h-8 w-auto gap-1.5 text-xs text-muted-foreground">
-            <Gavel className="h-3.5 w-3.5" />
-            <SelectValue placeholder="Judge model" />
-          </SelectTrigger>
-          <SelectContent>
-            {judgeOptions.map((o) => (
-              <SelectItem
-                key={`${o.provider}:${o.model}`}
-                value={`${o.provider}:${o.model}`}
-                className="text-xs"
-              >
-                {o.model} <span className="text-muted-foreground">({o.provider})</span>
+        {/* Judge model selector — prompts for configuration when unset */}
+        {judgeConfigured ? (
+          <Select
+            value={judgeValue}
+            onValueChange={(v) => {
+              if (v === "__configure__") {
+                setJudgeConfigOpen(true);
+                return;
+              }
+              const [provider, ...rest] = v.split(":");
+              setJudge(rest.join(":"), provider as Provider);
+            }}
+            disabled={isRunning}
+          >
+            <SelectTrigger className="h-8 w-auto gap-1.5 text-xs text-muted-foreground">
+              <Gavel className="h-3.5 w-3.5" />
+              <SelectValue placeholder="Judge model" />
+            </SelectTrigger>
+            <SelectContent>
+              {judgeOptions.map((o) => (
+                <SelectItem
+                  key={`${o.provider}:${o.model}`}
+                  value={`${o.provider}:${o.model}`}
+                  className="text-xs"
+                >
+                  {o.model} <span className="text-muted-foreground">({o.provider})</span>
+                </SelectItem>
+              ))}
+              <SelectItem value="__configure__" className="text-xs text-muted-foreground">
+                Configure judge…
               </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            </SelectContent>
+          </Select>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs text-amber-600 border-amber-500/50 hover:text-amber-600"
+            onClick={() => setJudgeConfigOpen(true)}
+            disabled={isRunning}
+          >
+            <Gavel className="h-3.5 w-3.5" />
+            Configure judge…
+          </Button>
+        )}
 
         {/* Action buttons */}
         <AnimatePresence mode="wait">
@@ -207,6 +236,7 @@ export function PromptEditor() {
               exit={{ opacity: 0, scale: 0.95 }}
             >
               <Button
+                id="run-council-button"
                 onClick={handleRun}
                 disabled={!canSubmit}
                 className="gap-2 bg-primary hover:bg-primary/90"
@@ -228,6 +258,7 @@ export function PromptEditor() {
           runCouncil();
         }}
       />
+      <JudgeConfigDialog open={judgeConfigOpen} onOpenChange={setJudgeConfigOpen} />
     </motion.div>
   );
 }
