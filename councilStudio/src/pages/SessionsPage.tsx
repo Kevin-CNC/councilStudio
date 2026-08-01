@@ -1,7 +1,8 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -19,23 +20,49 @@ import {
 } from "@/components/ui/select";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
+import { toast } from "@/components/ui/toaster";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, History } from "lucide-react";
+import { Search, History, Download, Upload, Loader2 } from "lucide-react";
 import { SessionCard } from "@/components/sessions/SessionCard";
+import type { SessionExportItem } from "@/types";
+
+/** Download a JSON string as a file in the browser. */
+function downloadJSON(filename: string, json: string) {
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export function SessionsPage() {
-  const { sessions, restoreSession, togglePinSession, removeSession, setCurrentView } = useAppStore(
+  const { sessions, sessionsLoaded, restoreSession, togglePinSession, removeSession, setCurrentView, exportSessionsToJSON, importSessions } = useAppStore(
     useShallow((s) => ({
       sessions: s.sessions,
+      sessionsLoaded: s.sessionsLoaded,
       restoreSession: s.restoreSession,
       togglePinSession: s.togglePinSession,
       removeSession: s.removeSession,
       setCurrentView: s.setCurrentView,
+      exportSessionsToJSON: s.exportSessionsToJSON,
+      importSessions: s.importSessions,
     }))
   );
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportTitle, setExportTitle] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
     let result = [...sessions];
@@ -72,6 +99,49 @@ export function SessionsPage() {
     setPendingDeleteId(null);
   }, [pendingDeleteId, removeSession]);
 
+  const handleExport = useCallback(() => {
+    if (!exportTitle.trim()) return;
+    const json = exportSessionsToJSON(exportTitle.trim());
+    const filename = `${exportTitle.trim()}-${todayStr()}.json`;
+    downloadJSON(filename, json);
+    setExportDialogOpen(false);
+    setExportTitle("");
+    toast("success", `Exported ${sessions.length} session${sessions.length === 1 ? "" : "s"}`);
+  }, [exportTitle, exportSessionsToJSON, sessions.length]);
+
+  const handleImportFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+
+      const file = files[0];
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const parsed = JSON.parse(reader.result as string);
+          if (parsed.sessions && Array.isArray(parsed.sessions)) {
+            const { imported, errors } = await importSessions(parsed.sessions as SessionExportItem[]);
+            if (errors.length > 0) {
+              toast("info", `Imported ${imported} session${imported === 1 ? "" : "s"}`, `${errors.length} failed.`);
+            } else {
+              toast("success", `Imported ${imported} session${imported === 1 ? "" : "s"}`);
+            }
+          } else {
+            toast("error", "Invalid file format", "Expected a 'sessions' array.");
+          }
+        } catch {
+          toast("error", "Invalid JSON file", "Could not parse the selected file.");
+        }
+      };
+      reader.onerror = () => {
+        toast("error", "Failed to read file");
+      };
+      reader.readAsText(file);
+      e.target.value = "";
+    },
+    [importSessions]
+  );
+
   return (
     <div className="flex h-full flex-col p-6">
       <div className="mb-4 flex items-center justify-between">
@@ -80,6 +150,34 @@ export function SessionsPage() {
           <p className="text-sm text-muted-foreground">
             {sessions.length} council run{sessions.length === 1 ? "" : "s"}
           </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => setExportDialogOpen(true)}
+            disabled={sessions.length === 0}
+          >
+            <Download className="h-4 w-4" />
+            Export
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Upload className="h-4 w-4" />
+            Import
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={handleImportFile}
+          />
         </div>
       </div>
 
@@ -109,7 +207,11 @@ export function SessionsPage() {
       </div>
 
       <ScrollArea className="flex-1">
-        {filtered.length === 0 ? (
+        {!sessionsLoaded ? (
+          <div className="flex items-center justify-center py-24">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : filtered.length === 0 ? (
           <EmptyState hasSessions={sessions.length > 0} />
         ) : (
           <div className="grid grid-cols-1 gap-3 pr-2 md:grid-cols-2 xl:grid-cols-3">
@@ -146,6 +248,38 @@ export function SessionsPage() {
               onClick={handleDelete}
             >
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Export title dialog */}
+      <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Export Sessions</DialogTitle>
+            <DialogDescription>
+              Enter a name for the export file.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="sessions-export-title">Title</Label>
+            <Input
+              id="sessions-export-title"
+              placeholder="My Sessions"
+              value={exportTitle}
+              onChange={(e) => setExportTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleExport();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExportDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleExport} disabled={!exportTitle.trim()}>
+              Export
             </Button>
           </DialogFooter>
         </DialogContent>

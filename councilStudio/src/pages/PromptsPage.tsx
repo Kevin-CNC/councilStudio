@@ -201,7 +201,7 @@ export function PromptsPage() {
             className="hidden"
             onChange={handleImportFile}
           />
-          <Button onClick={openCreate} className="gap-1.5">
+          <Button size="sm" onClick={openCreate} className="gap-1.5">
             <Plus className="h-4 w-4" />
             New Template
           </Button>
