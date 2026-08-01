@@ -25,6 +25,8 @@ interface NavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   badge?: string;
+  /** Feature not implemented yet — shown dimmed with a "Soon" badge. */
+  comingSoon?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -32,13 +34,13 @@ const NAV_ITEMS: NavItem[] = [
   { id: "members", label: "Members", icon: UserCircle },
   { id: "prompts", label: "Prompts", icon: MessageSquare },
   { id: "sessions", label: "Sessions", icon: History },
-  { id: "knowledge", label: "Knowledge Base", icon: BookOpen },
-  { id: "files", label: "Files", icon: FileText },
+  { id: "knowledge", label: "Knowledge Base", icon: BookOpen, comingSoon: true },
+  { id: "files", label: "Files", icon: FileText, comingSoon: true },
 ];
 
 const BOTTOM_ITEMS: NavItem[] = [
-  { id: "analytics", label: "Analytics", icon: BarChart3 },
-  { id: "integrations", label: "Integrations", icon: Plug },
+  { id: "analytics", label: "Analytics", icon: BarChart3, comingSoon: true },
+  { id: "integrations", label: "Integrations", icon: Plug, comingSoon: true },
   { id: "api-keys", label: "API Keys", icon: Key },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -176,18 +178,25 @@ const SidebarNavItem = memo(function SidebarNavItem({
         "group flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
         "hover:bg-muted hover:text-foreground",
         active && "bg-primary/10 text-primary hover:bg-primary/15",
-        collapsed && "justify-center px-0"
+        collapsed && "justify-center px-0",
+        item.comingSoon && "opacity-60 cursor-default"
       )}
-      title={collapsed ? item.label : undefined}
+      title={item.comingSoon ? `${item.label} — Coming soon` : collapsed ? item.label : undefined}
     >
       <item.icon className={cn("h-4 w-4 shrink-0", active && "text-primary")} />
       {!collapsed && (
         <>
           <span className="flex-1 truncate text-left">{item.label}</span>
-          {item.badge && (
-            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold text-primary">
-              {item.badge}
+          {item.comingSoon ? (
+            <span className="flex h-5 items-center justify-center rounded-full bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">
+              Soon
             </span>
+          ) : (
+            item.badge && (
+              <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold text-primary">
+                {item.badge}
+              </span>
+            )
           )}
         </>
       )}
