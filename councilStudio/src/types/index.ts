@@ -215,3 +215,20 @@ export interface TemplateExportItem {
 export interface TemplateExportFile {
   templates: TemplateExportItem[];
 }
+
+export interface SessionExportItem {
+  Name: string;
+  prompt: string;
+  status: RunStatus;
+  persona_count: number;
+  tokens_used: number;
+  total_cost: number;
+  duration_ms: number;
+  created_at: number;
+  pinned: boolean;
+  run?: CouncilRun;
+}
+
+export interface SessionExportFile {
+  sessions: SessionExportItem[];
+}
