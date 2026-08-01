@@ -12,9 +12,64 @@ import type {
   MemberRunStatus,
   MemberExportItem,
   TemplateExportItem,
+  SessionExportItem,
 } from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
 import { toast } from "@/components/ui/toaster";
+import {
+  DEFAULT_SHORTCUTS,
+  loadShortcuts,
+  saveShortcuts,
+  type ShortcutAction,
+  type ShortcutBinding,
+} from "@/lib/shortcuts";
+
+// --- UI settings persistence (localStorage) ---
+
+const LS_KEYS = {
+  theme: "theme",
+  fontSize: "app-font-size",
+  highContrast: "app-high-contrast",
+  reducedMotion: "app-reduced-motion",
+  judgeModel: "judge-model",
+  judgeProvider: "judge-provider",
+} as const;
+
+function lsGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function lsSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // storage unavailable — non-fatal
+  }
+}
+
+function storedTheme(): Theme {
+  return lsGet(LS_KEYS.theme) === "dark" ? "dark" : "light";
+}
+
+function storedFontSize(): number {
+  const n = Number(lsGet(LS_KEYS.fontSize));
+  return Number.isFinite(n) && n >= 12 && n <= 18 ? n : 16;
+}
+
+function storedBool(key: string): boolean {
+  return lsGet(key) === "true";
+}
+
+function storedJudgeProvider(): Provider {
+  const p = lsGet(LS_KEYS.judgeProvider);
+  return p === "anthropic" || p === "openai" || p === "openrouter" || p === "ollama"
+    ? p
+    : "anthropic";
+}
 
 type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
 type ViewId = "home" | "prompts" | "sessions" | "members";
@@ -51,12 +106,17 @@ interface AppState {
 
   // Loading / error
   isLoading: boolean;
+  /** False until the first loadSessions() settles — drives the sessions-page spinner. */
+  sessionsLoaded: boolean;
   error: string | null;
 
   // UI — flattened for fine-grained subscriptions
   sidebarOpen: boolean;
   rightPanelOpen: boolean;
   theme: Theme;
+  fontSize: number;
+  highContrast: boolean;
+  reducedMotion: boolean;
   settingsOpen: boolean;
   apiKeysOpen: boolean;
   memberFormOpen: boolean;
@@ -68,6 +128,7 @@ interface AppState {
   responsePanelHeight: number;
   responsePanelCollapsed: boolean;
   currentView: ViewId;
+  shortcuts: Record<ShortcutAction, ShortcutBinding>;
   importPreviewOpen: boolean;
   importPreviewData: { type: "members" | "templates"; items: MemberExportItem[] | TemplateExportItem[]; fileName: string } | null;
   setImportPreviewOpen: (open: boolean) => void;
@@ -85,8 +146,10 @@ interface AppState {
   swapMember: (outId: string, inId: string) => Promise<void>;
   exportMembersToJSON: (title: string) => string;
   exportTemplatesToJSON: (title: string) => string;
+  exportSessionsToJSON: (title: string) => string;
   importMembers: (items: MemberExportItem[]) => Promise<{ imported: number; errors: string[] }>;
   importTemplates: (items: TemplateExportItem[]) => Promise<{ imported: number; errors: string[] }>;
+  importSessions: (items: SessionExportItem[]) => Promise<{ imported: number; errors: string[] }>;
 
   // Actions - Prompt
   setPrompt: (prompt: string) => void;
@@ -117,6 +180,11 @@ interface AppState {
   toggleSidebar: () => void;
   toggleRightPanel: () => void;
   setTheme: (theme: Theme) => void;
+  setFontSize: (size: number) => void;
+  setHighContrast: (enabled: boolean) => void;
+  setReducedMotion: (enabled: boolean) => void;
+  /** Apply persisted UI settings (theme, font size, contrast, motion) to the DOM. Called once on app mount. */
+  applyUiSettingsToDOM: () => void;
   setSettingsOpen: (open: boolean) => void;
   setApiKeysOpen: (open: boolean) => void;
   setMemberFormOpen: (open: boolean, editingId?: string | null) => void;
@@ -126,6 +194,8 @@ interface AppState {
   setResponsePanelHeight: (height: number) => void;
   toggleResponsePanelCollapsed: () => void;
   setCurrentView: (view: ViewId) => void;
+  setShortcut: (action: ShortcutAction, binding: ShortcutBinding) => void;
+  resetShortcuts: () => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -139,19 +209,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   isRunning: false,
   activeRun: null,
   cancelledRunId: null,
-  judgeModel: "claude-sonnet-5",
-  judgeProvider: "anthropic",
+  judgeModel: lsGet(LS_KEYS.judgeModel) ?? "",
+  judgeProvider: storedJudgeProvider(),
   personaStatuses: {},
   judgeStatus: "idle",
 
   // Loading / error
   isLoading: false,
+  sessionsLoaded: false,
   error: null,
 
   // Initial UI state — flat keys for fine-grained subscriptions
   sidebarOpen: true,
   rightPanelOpen: false,
-  theme: "light",
+  theme: storedTheme(),
+  fontSize: storedFontSize(),
+  highContrast: storedBool(LS_KEYS.highContrast),
+  reducedMotion: storedBool(LS_KEYS.reducedMotion),
   settingsOpen: false,
   apiKeysOpen: false,
   memberFormOpen: false,
@@ -163,6 +237,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   responsePanelHeight: 380,
   responsePanelCollapsed: false,
   currentView: "home",
+  shortcuts: loadShortcuts(),
   importPreviewOpen: false,
   importPreviewData: null,
 
@@ -326,6 +401,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     return JSON.stringify(file, null, 2);
   },
 
+  exportSessionsToJSON: (_title) => {
+    const sessions = get().sessions;
+    const items: SessionExportItem[] = sessions.map((s) => ({
+      Name: s.title,
+      prompt: s.prompt,
+      status: s.status,
+      persona_count: s.personaCount,
+      tokens_used: s.tokensUsed,
+      total_cost: s.totalCost,
+      duration_ms: s.durationMs,
+      created_at: s.createdAt,
+      pinned: s.pinned,
+      run: s.run,
+    }));
+    const file: { sessions: SessionExportItem[] } = { sessions: items };
+    return JSON.stringify(file, null, 2);
+  },
+
   importMembers: async (items) => {
     const errors: string[] = [];
     let imported = 0;
@@ -362,6 +455,42 @@ export const useAppStore = create<AppState>((set, get) => ({
           prompt: item.prompt || "",
           category: item.category || "custom",
         });
+        imported++;
+      } catch (e) {
+        errors.push(`${item.Name || "Unknown"}: ${String(e)}`);
+      }
+    }
+    return { imported, errors };
+  },
+
+  importSessions: async (items) => {
+    const errors: string[] = [];
+    let imported = 0;
+    for (const item of items) {
+      try {
+        const createdAt = item.created_at ?? Date.now();
+        const session: Session = {
+          // Fresh id so re-importing the same file never overwrites an existing session
+          id: crypto.randomUUID(),
+          title: item.Name || item.prompt.slice(0, 60) || "Imported session",
+          prompt: item.prompt || "",
+          configId: "default",
+          configName: "Default",
+          status: item.status || "completed",
+          personaCount: item.persona_count ?? 0,
+          tokensUsed: item.tokens_used ?? 0,
+          totalCost: item.total_cost ?? 0,
+          durationMs: item.duration_ms ?? 0,
+          createdAt,
+          updatedAt: createdAt,
+          pinned: item.pinned ?? false,
+          tags: [],
+          run: item.run,
+        };
+        await bridge.saveSession(session);
+        set((state) => ({
+          sessions: [session, ...state.sessions],
+        }));
         imported++;
       } catch (e) {
         errors.push(`${item.Name || "Unknown"}: ${String(e)}`);
@@ -444,16 +573,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  setJudge: (model, provider) => set({ judgeModel: model, judgeProvider: provider }),
+  setJudge: (model, provider) => {
+    set({ judgeModel: model, judgeProvider: provider });
+    lsSet(LS_KEYS.judgeModel, model);
+    lsSet(LS_KEYS.judgeProvider, provider);
+  },
 
   // --- Session actions ---
 
   loadSessions: async () => {
     try {
       const sessions = await bridge.listSessions();
-      set({ sessions });
+      set({ sessions, sessionsLoaded: true });
     } catch (e) {
-      set({ error: String(e) });
+      set({ error: String(e), sessionsLoaded: true });
     }
   },
 
@@ -595,7 +728,35 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setTheme: (theme) => {
     set({ theme });
+    lsSet(LS_KEYS.theme, theme);
     document.documentElement.classList.toggle("dark", theme === "dark");
+  },
+
+  setFontSize: (size) => {
+    set({ fontSize: size });
+    lsSet(LS_KEYS.fontSize, String(size));
+    document.documentElement.style.setProperty("--app-font-size", `${size}px`);
+  },
+
+  setHighContrast: (enabled) => {
+    set({ highContrast: enabled });
+    lsSet(LS_KEYS.highContrast, String(enabled));
+    document.documentElement.classList.toggle("high-contrast", enabled);
+  },
+
+  setReducedMotion: (enabled) => {
+    set({ reducedMotion: enabled });
+    lsSet(LS_KEYS.reducedMotion, String(enabled));
+    document.documentElement.classList.toggle("reduced-motion", enabled);
+  },
+
+  applyUiSettingsToDOM: () => {
+    const { theme, fontSize, highContrast, reducedMotion } = get();
+    const root = document.documentElement;
+    root.classList.toggle("dark", theme === "dark");
+    root.classList.toggle("high-contrast", highContrast);
+    root.classList.toggle("reduced-motion", reducedMotion);
+    root.style.setProperty("--app-font-size", `${fontSize}px`);
   },
 
   setSettingsOpen: (open) => set({ settingsOpen: open }),
@@ -617,6 +778,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ responsePanelCollapsed: !state.responsePanelCollapsed })),
 
   setCurrentView: (view) => set({ currentView: view }),
+
+  setShortcut: (action, binding) => {
+    const shortcuts = { ...get().shortcuts, [action]: binding };
+    set({ shortcuts });
+    saveShortcuts(shortcuts);
+  },
+
+  resetShortcuts: () => {
+    const shortcuts = { ...DEFAULT_SHORTCUTS };
+    set({ shortcuts });
+    saveShortcuts(shortcuts);
+  },
 
   setImportPreviewOpen: (open) => set({ importPreviewOpen: open }),
 
@@ -643,6 +816,9 @@ export const selectSwapTargetId = (s: AppState) => s.swapTargetId;
 export const selectCurrentView = (s: AppState) => s.currentView;
 export const selectActiveTab = (s: AppState) => s.activeTab;
 export const selectTheme = (s: AppState) => s.theme;
+export const selectFontSize = (s: AppState) => s.fontSize;
+export const selectHighContrast = (s: AppState) => s.highContrast;
+export const selectReducedMotion = (s: AppState) => s.reducedMotion;
 export const selectJudgeModel = (s: AppState) => s.judgeModel;
 export const selectJudgeProvider = (s: AppState) => s.judgeProvider;
 export const selectImportPreviewOpen = (s: AppState) => s.importPreviewOpen;
