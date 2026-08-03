@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Dashboard } from "@/pages/Dashboard";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { KeyboardProvider } from "@/components/layout/KeyboardProvider";
 import { Toaster } from "@/components/ui/toaster";
 import { useAppStore, initStoreListeners, resetListenerGuard } from "@/stores/appStore";
 import { seedDefaultMembers } from "@/lib/tauri-bridge";
@@ -12,6 +13,8 @@ function App() {
   const loadPromptTemplates = useAppStore((s) => s.loadPromptTemplates);
 
   useEffect(() => {
+    // Hydrate persisted UI settings (theme, font size, contrast, motion) onto the DOM
+    useAppStore.getState().applyUiSettingsToDOM();
     async function init() {
       await loadMembers();
       const { members } = useAppStore.getState();
@@ -51,10 +54,12 @@ function App() {
 
   return (
     <TooltipProvider>
-      <AppShell>
-        <Dashboard />
-      </AppShell>
-      <Toaster />
+      <KeyboardProvider>
+        <AppShell>
+          <Dashboard />
+        </AppShell>
+        <Toaster />
+      </KeyboardProvider>
     </TooltipProvider>
   );
 }

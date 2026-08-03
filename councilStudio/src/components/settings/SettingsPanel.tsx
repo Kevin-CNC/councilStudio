@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Sheet,
   SheetContent,
@@ -6,6 +6,15 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
@@ -14,16 +23,23 @@ import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
-import type { Theme } from "@/types";
+import {
+  DEFAULT_SHORTCUTS,
+  SHORTCUT_LABELS,
+  SHORTCUT_ORDER,
+  findConflict,
+  formatBinding,
+  isModifierOnly,
+  type ShortcutAction,
+  type ShortcutBinding,
+} from "@/lib/shortcuts";
 import { Palette, Keyboard, Bell } from "lucide-react";
 
 export function SettingsPanel() {
-  const { settingsOpen, setSettingsOpen, theme, setTheme } = useAppStore(
+  const { settingsOpen, setSettingsOpen } = useAppStore(
     useShallow((s) => ({
       settingsOpen: s.settingsOpen,
       setSettingsOpen: s.setSettingsOpen,
-      theme: s.theme,
-      setTheme: s.setTheme,
     }))
   );
 
@@ -52,7 +68,7 @@ export function SettingsPanel() {
             </TabsList>
 
             <TabsContent value="appearance" className="mt-4 space-y-4">
-              <AppearanceSection theme={theme} setTheme={setTheme} />
+              <AppearanceSection />
             </TabsContent>
             <TabsContent value="shortcuts" className="mt-4">
               <ShortcutsSection />
@@ -67,10 +83,32 @@ export function SettingsPanel() {
   );
 }
 
-function AppearanceSection({ theme, setTheme }: { theme: Theme; setTheme: (t: Theme) => void }) {
-  const [fontSize, setFontSize] = useState([14]);
-  const [highContrast, setHighContrast] = useState(false);
-  const [reducedMotion, setReducedMotion] = useState(false);
+function AppearanceSection() {
+  const {
+    theme,
+    setTheme,
+    fontSize,
+    setFontSize,
+    highContrast,
+    setHighContrast,
+    reducedMotion,
+    setReducedMotion,
+  } = useAppStore(
+    useShallow((s) => ({
+      theme: s.theme,
+      setTheme: s.setTheme,
+      fontSize: s.fontSize,
+      setFontSize: s.setFontSize,
+      highContrast: s.highContrast,
+      setHighContrast: s.setHighContrast,
+      reducedMotion: s.reducedMotion,
+      setReducedMotion: s.setReducedMotion,
+    }))
+  );
+
+  // Local preview during drag; persisted to the store only on commit so the
+  // whole app doesn't re-render on every pixel of slider movement.
+  const [previewSize, setPreviewSize] = useState([fontSize]);
 
   return (
     <div className="space-y-6">
@@ -102,11 +140,12 @@ function AppearanceSection({ theme, setTheme }: { theme: Theme; setTheme: (t: Th
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <Label>Font Size</Label>
-          <span className="text-xs font-mono text-muted-foreground">{fontSize[0]}px</span>
+          <span className="text-xs font-mono text-muted-foreground">{previewSize[0]}px</span>
         </div>
         <Slider
-          value={fontSize}
-          onValueChange={setFontSize}
+          value={previewSize}
+          onValueChange={setPreviewSize}
+          onValueCommit={(v) => setFontSize(v[0])}
           min={12}
           max={18}
           step={1}
@@ -142,34 +181,127 @@ function AppearanceSection({ theme, setTheme }: { theme: Theme; setTheme: (t: Th
 }
 
 function ShortcutsSection() {
-  const shortcuts = [
-    { keys: ["⌘", "K"], action: "Open search" },
-    { keys: ["⌘", "N"], action: "New council run" },
-    { keys: ["⌘", "⇧", "P"], action: "Open prompt history" },
-    { keys: ["⌘", "B"], action: "Toggle sidebar" },
-    { keys: ["⌘", "."], action: "Open settings" },
-    { keys: ["Esc"], action: "Close panels / Cancel run" },
-    { keys: ["⌘", "↵"], action: "Submit prompt" },
-    { keys: ["⌘", "1-6"], action: "Switch to tab" },
-  ];
+  const { shortcuts, setShortcut, resetShortcuts } = useAppStore(
+    useShallow((s) => ({
+      shortcuts: s.shortcuts,
+      setShortcut: s.setShortcut,
+      resetShortcuts: s.resetShortcuts,
+    }))
+  );
+
+  const [capturing, setCapturing] = useState<ShortcutAction | null>(null);
+  const [conflict, setConflict] = useState<{
+    action: ShortcutAction;
+    binding: ShortcutBinding;
+    conflictsWith: ShortcutAction;
+  } | null>(null);
+
+  // While capturing, record the next real key combo as the new binding.
+  // Bare Escape cancels instead of binding.
+  useEffect(() => {
+    if (!capturing || conflict) return;
+
+    function onKeyDown(e: KeyboardEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isModifierOnly(e)) return;
+      if (e.code === "Escape" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        setCapturing(null);
+        return;
+      }
+      const binding: ShortcutBinding = {
+        code: e.code,
+        shift: e.shiftKey,
+        ctrl: e.ctrlKey,
+        alt: e.altKey,
+        meta: e.metaKey,
+      };
+      const conflictsWith = findConflict(binding, shortcuts, capturing!);
+      if (conflictsWith) {
+        setConflict({ action: capturing!, binding, conflictsWith });
+      } else {
+        setShortcut(capturing!, binding);
+        setCapturing(null);
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [capturing, conflict, shortcuts, setShortcut]);
+
+  const closeCapture = useCallback(() => {
+    setCapturing(null);
+    setConflict(null);
+  }, []);
+
+  const applyConflictOverride = useCallback(() => {
+    if (!conflict) return;
+    // Bind the new action and revert the displaced one to its default
+    setShortcut(conflict.action, conflict.binding);
+    setShortcut(conflict.conflictsWith, DEFAULT_SHORTCUTS[conflict.conflictsWith]);
+    closeCapture();
+  }, [conflict, setShortcut, closeCapture]);
 
   return (
     <div className="space-y-1">
-      {shortcuts.map((s) => (
-        <div key={s.action} className="flex items-center justify-between rounded-lg px-3 py-2 hover:bg-muted/50">
-          <span className="text-sm text-foreground">{s.action}</span>
-          <div className="flex items-center gap-1">
-            {s.keys.map((k, i) => (
-              <span key={i} className="flex items-center">
-                <kbd className="inline-flex h-6 min-w-[24px] items-center justify-center rounded border border-border bg-muted px-1.5 text-[11px] font-mono text-foreground">
-                  {k}
-                </kbd>
-                {i < s.keys.length - 1 && <span className="mx-0.5 text-muted-foreground">+</span>}
-              </span>
-            ))}
+      {SHORTCUT_ORDER.map((action) => (
+        <div
+          key={action}
+          className="flex items-center justify-between rounded-lg px-3 py-2 hover:bg-muted/50"
+        >
+          <span className="text-sm text-foreground">{SHORTCUT_LABELS[action]}</span>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              {formatBinding(shortcuts[action]).map((k, i, arr) => (
+                <span key={i} className="flex items-center">
+                  <kbd className="inline-flex h-6 min-w-[24px] items-center justify-center rounded border border-border bg-muted px-1.5 text-[11px] font-mono text-foreground">
+                    {k}
+                  </kbd>
+                  {i < arr.length - 1 && <span className="mx-0.5 text-muted-foreground">+</span>}
+                </span>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-muted-foreground"
+              onClick={() => setCapturing(action)}
+            >
+              Edit
+            </Button>
           </div>
         </div>
       ))}
+
+      <div className="flex justify-end pt-3">
+        <Button variant="outline" size="sm" onClick={resetShortcuts}>
+          Reset to defaults
+        </Button>
+      </div>
+
+      {/* Key capture dialog */}
+      <Dialog open={capturing !== null} onOpenChange={(open) => !open && closeCapture()}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>
+              {capturing ? SHORTCUT_LABELS[capturing] : "Edit shortcut"}
+            </DialogTitle>
+            <DialogDescription>
+              {conflict
+                ? `This shortcut is already used by "${SHORTCUT_LABELS[conflict.conflictsWith]}". Override? The other action resets to its default.`
+                : "Press the new key combination. Bare Escape cancels."}
+            </DialogDescription>
+          </DialogHeader>
+          {conflict && (
+            <DialogFooter>
+              <Button variant="outline" onClick={closeCapture}>
+                Cancel
+              </Button>
+              <Button onClick={applyConflictOverride}>Override</Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

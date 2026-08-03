@@ -29,6 +29,10 @@
 }
 
 @layer base {
+  html {
+    /* rem-based text scales from here; overridden by --app-font-size (Settings > Font Size) */
+    font-size: var(--app-font-size, 16px);
+  }
   * {
     border-color: var(--color-border);
   }
@@ -107,6 +111,28 @@
 }
 .toast-progress {
   animation: toast-progress 5s linear forwards;
+}
+
+/* High contrast — overrides theme vars when <html> has .high-contrast.
+   Unlayered on purpose so it wins the cascade (same trick as .dark above). */
+.high-contrast {
+  --color-foreground: hsl(0 0% 0%);
+  --color-muted-foreground: hsl(0 0% 30%);
+  --color-border: hsl(0 0% 40%);
+}
+.dark.high-contrast {
+  --color-foreground: hsl(0 0% 100%);
+  --color-muted-foreground: hsl(0 0% 85%);
+  --color-border: hsl(0 0% 70%);
+}
+
+/* Reduced motion — app-level toggle via .reduced-motion on <html> */
+.reduced-motion *,
+.reduced-motion *::before,
+.reduced-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
 
 /* Respect user's motion preferences */
