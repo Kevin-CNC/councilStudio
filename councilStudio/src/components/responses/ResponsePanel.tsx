@@ -1,13 +1,15 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ResponseCard } from "./ResponseCard";
+import { RawResponseDialog } from "./RawResponseDialog";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutGrid,
@@ -19,6 +21,7 @@ import {
   MessageSquare,
   Gavel,
   Loader2,
+  Braces,
 } from "lucide-react";
 
 export function ResponsePanel() {
@@ -169,6 +172,8 @@ function JudgePendingCard({ isRunning, judgeStatus }: any) {
 
 // Overview Tab
 function OverviewTab({ results, judgeResult, isRunning, judgeStatus }: any) {
+  const [rawOpen, setRawOpen] = useState(false);
+
   if (!judgeResult) {
     return <JudgePendingCard isRunning={isRunning} judgeStatus={judgeStatus} />;
   }
@@ -181,6 +186,17 @@ function OverviewTab({ results, judgeResult, isRunning, judgeStatus }: any) {
           <CardTitle className="flex items-center gap-2">
             <BarChart3 className="h-4 w-4 text-secondary" />
             Council Summary
+            {judgeResult.rawResponse && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground ml-auto"
+                title="View raw judge response"
+                onClick={() => setRawOpen(true)}
+              >
+                <Braces className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -239,6 +255,13 @@ function OverviewTab({ results, judgeResult, isRunning, judgeStatus }: any) {
           </div>
         </CardContent>
       </Card>
+
+      <RawResponseDialog
+        open={rawOpen}
+        onOpenChange={setRawOpen}
+        title="Raw response — Judge"
+        rawResponse={judgeResult.rawResponse || ""}
+      />
     </div>
   );
 }
