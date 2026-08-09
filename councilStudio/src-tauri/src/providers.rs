@@ -6,7 +6,7 @@
 //! - `judge_call` — the judge synthesis call. Reuses `chat_completion` and
 //!   parses the structured JSON verdict.
 
-use crate::cmds::{JudgeResult, PersonaResult};
+use crate::cmds::{JudgeResult, PersonaResult, RunAttachment};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -45,10 +45,51 @@ struct OllamaOptions {
     num_predict: i64,
 }
 
+/// Message content: a plain string in the text-only path (byte-for-byte
+/// identical to the original wire format), or an array of provider-specific
+/// content blocks when image attachments are present.
+#[derive(Serialize, Clone)]
+#[serde(untagged)]
+enum UserMessageContent {
+    Text(String),
+    Blocks(Vec<serde_json::Value>),
+}
+
 #[derive(Serialize, Clone)]
 struct Message {
     role: String,
-    content: String,
+    content: UserMessageContent,
+    /// Ollama-only: bare base64 image data. Omitted entirely when empty, so
+    /// Anthropic/OpenAI/OpenRouter request bodies are unaffected.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    images: Vec<String>,
+}
+
+impl Message {
+    fn text(role: &str, content: &str) -> Self {
+        Message {
+            role: role.to_string(),
+            content: UserMessageContent::Text(content.to_string()),
+            images: Vec::new(),
+        }
+    }
+}
+
+/// Strip a "data:<mime>;base64,<data>" prefix if present, returning bare base64.
+fn bare_base64(data: &str) -> &str {
+    match data.find(',') {
+        Some(idx) if data.starts_with("data:") => &data[idx + 1..],
+        _ => data,
+    }
+}
+
+/// Ensure a full "data:<mime>;base64,<data>" URL, building one if given bare base64.
+fn to_data_url(mime: &str, data: &str) -> String {
+    if data.starts_with("data:") {
+        data.to_string()
+    } else {
+        format!("data:{mime};base64,{data}")
+    }
 }
 
 #[derive(Deserialize)]
@@ -119,6 +160,9 @@ pub struct ChatRequest<'a> {
     pub user_prompt: &'a str,
     pub temperature: f64,
     pub max_tokens: i64,
+    /// Image attachments for this call. Empty by default — the request body
+    /// is byte-for-byte identical to the text-only path when empty.
+    pub attachments: &'a [RunAttachment],
 }
 
 /// Make one chat completion call to any supported provider.
@@ -281,13 +325,31 @@ async fn call_anthropic_wire(
     api_key: &str,
     req: &ChatRequest<'_>,
 ) -> Result<(String, u64, u64), String> {
+    let user_message = if req.attachments.is_empty() {
+        Message::text("user", req.user_prompt)
+    } else {
+        let mut blocks = vec![serde_json::json!({ "type": "text", "text": req.user_prompt })];
+        for a in req.attachments {
+            blocks.push(serde_json::json!({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": a.mime_type,
+                    "data": bare_base64(&a.data_base64),
+                }
+            }));
+        }
+        Message {
+            role: "user".to_string(),
+            content: UserMessageContent::Blocks(blocks),
+            images: Vec::new(),
+        }
+    };
+
     let body = AnthropicRequest {
         model: req.model.to_string(),
         system: req.system_prompt.to_string(),
-        messages: vec![Message {
-            role: "user".to_string(),
-            content: req.user_prompt.to_string(),
-        }],
+        messages: vec![user_message],
         max_tokens: req.max_tokens,
         temperature: req.temperature,
     };
@@ -322,17 +384,28 @@ async fn call_openai_wire(
     url: &str,
     req: &ChatRequest<'_>,
 ) -> Result<(String, u64, u64), String> {
+    let user_message = if req.attachments.is_empty() {
+        Message::text("user", req.user_prompt)
+    } else {
+        let mut blocks = vec![serde_json::json!({ "type": "text", "text": req.user_prompt })];
+        for a in req.attachments {
+            blocks.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": to_data_url(&a.mime_type, &a.data_base64) }
+            }));
+        }
+        Message {
+            role: "user".to_string(),
+            content: UserMessageContent::Blocks(blocks),
+            images: Vec::new(),
+        }
+    };
+
     let body = OpenAiRequest {
         model: req.model.to_string(),
         messages: vec![
-            Message {
-                role: "system".to_string(),
-                content: req.system_prompt.to_string(),
-            },
-            Message {
-                role: "user".to_string(),
-                content: req.user_prompt.to_string(),
-            },
+            Message::text("system", req.system_prompt),
+            user_message,
         ],
         max_tokens: req.max_tokens,
         temperature: req.temperature,
@@ -372,18 +445,23 @@ async fn call_ollama_wire(
     base_url: &str,
     req: &ChatRequest<'_>,
 ) -> Result<(String, u64, u64), String> {
+    let user_message = if req.attachments.is_empty() {
+        Message::text("user", req.user_prompt)
+    } else {
+        Message {
+            role: "user".to_string(),
+            content: UserMessageContent::Text(req.user_prompt.to_string()),
+            images: req
+                .attachments
+                .iter()
+                .map(|a| bare_base64(&a.data_base64).to_string())
+                .collect(),
+        }
+    };
+
     let body = OllamaRequest {
         model: req.model.to_string(),
-        messages: vec![
-            Message {
-                role: "system".to_string(),
-                content: req.system_prompt.to_string(),
-            },
-            Message {
-                role: "user".to_string(),
-                content: req.user_prompt.to_string(),
-            },
-        ],
+        messages: vec![Message::text("system", req.system_prompt), user_message],
         stream: false,
         options: OllamaOptions {
             temperature: req.temperature,
