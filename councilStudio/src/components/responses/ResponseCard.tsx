@@ -16,10 +16,12 @@ import {
   Check,
   AlertCircle,
   Download,
+  Braces,
 } from "lucide-react";
 import { formatTokens, formatCost, formatDuration } from "@/lib/utils";
 import type { PersonaResult } from "@/types";
 import { PROVIDER_LABELS } from "@/lib/constants";
+import { RawResponseDialog } from "./RawResponseDialog";
 
 const CodeBlock = lazy(() => import("./CodeBlock"));
 
@@ -33,6 +35,7 @@ interface ResponseCardProps {
 export function ResponseCard({ result, streamingContent, isStreaming, color = "#666" }: ResponseCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [rawOpen, setRawOpen] = useState(false);
   const content = isStreaming ? streamingContent || "" : result.content;
 
   const handleCopy = async () => {
@@ -84,6 +87,17 @@ export function ResponseCard({ result, streamingContent, isStreaming, color = "#
             </div>
 
             <div className="flex items-center gap-1">
+              {result.rawResponse && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground"
+                  title="View raw provider response"
+                  onClick={() => setRawOpen(true)}
+                >
+                  <Braces className="h-3.5 w-3.5" />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -179,6 +193,12 @@ export function ResponseCard({ result, streamingContent, isStreaming, color = "#
           </Button>
         </CardFooter>
       </Card>
+      <RawResponseDialog
+        open={rawOpen}
+        onOpenChange={setRawOpen}
+        title={`Raw response — ${result.personaName}`}
+        rawResponse={result.rawResponse || ""}
+      />
     </motion.div>
   );
 }
