@@ -9,6 +9,7 @@ import type {
   PromptTemplate,
   CompatibilityCheckRequest,
   CompatibilityCheckResult,
+  RunAttachment,
 } from "@/types";
 
 /**
@@ -71,10 +72,20 @@ export async function seedDefaultMembers(): Promise<Persona[]> {
 export async function runCouncil(
   prompt: string,
   judgeModel: string,
-  judgeProvider: Provider
+  judgeProvider: Provider,
+  attachments: RunAttachment[] = []
 ): Promise<void> {
   return invoke<void>("run_council", {
-    request: { prompt, judgeModel, judgeProvider },
+    request: {
+      prompt,
+      judgeModel,
+      judgeProvider,
+      attachments: attachments.map((a) => ({
+        name: a.name,
+        mimeType: a.fileType,
+        dataBase64: a.dataUrl,
+      })),
+    },
   });
 }
 
