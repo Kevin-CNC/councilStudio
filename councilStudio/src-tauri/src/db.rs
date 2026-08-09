@@ -55,11 +55,20 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
             updated_at INTEGER NOT NULL,
             pinned INTEGER NOT NULL DEFAULT 0,
             tags TEXT NOT NULL DEFAULT '[]',
-            run_json TEXT NOT NULL
+            run_json TEXT NOT NULL,
+            raw_responses_json TEXT NOT NULL DEFAULT ''
         )",
         (),
     )
     .map_err(|e| format!("create table: {e}"))?;
+
+    // No migration framework exists — add the column idempotently for existing
+    // installs. The duplicate-column error is expected and discarded.
+    conn.execute(
+        "ALTER TABLE sessions ADD COLUMN raw_responses_json TEXT NOT NULL DEFAULT ''",
+        (),
+    )
+    .ok();
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS prompt_templates (
