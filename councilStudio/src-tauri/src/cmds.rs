@@ -107,6 +107,17 @@ pub struct JudgeResult {
 }
 
 
+/// A single image attachment sent with a run. Session-only; never persisted as bytes.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RunAttachment {
+    pub name: String,
+    pub mime_type: String,
+    /// Bare base64, or a full "data:<mime>;base64,<data>" URL — normalized at use.
+    #[serde(default)]
+    pub data_base64: String,
+}
+
 /// Input for the run_council command.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +125,8 @@ pub struct RunCouncilRequest {
     pub prompt: String,
     pub judge_model: String,
     pub judge_provider: String,
+    #[serde(default)]
+    pub attachments: Vec<RunAttachment>,
 }
 
 /// Input for saving an API key.
@@ -992,6 +1005,7 @@ pub async fn run_council(
         &enabled,
         &request.judge_model,
         &request.judge_provider,
+        &request.attachments,
     )
     .await
 }

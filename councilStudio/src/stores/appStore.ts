@@ -13,6 +13,7 @@ import type {
   MemberExportItem,
   TemplateExportItem,
   SessionExportItem,
+  PromptAttachment,
 } from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
 import { toast } from "@/components/ui/toaster";
@@ -92,6 +93,8 @@ interface AppState {
   sessions: Session[];
   promptTemplates: PromptTemplate[];
   currentPrompt: string;
+  /** In-memory image attachments on the current prompt input. Never persisted. */
+  attachments: PromptAttachment[];
 
   // Run state
   isRunning: boolean;
@@ -153,6 +156,9 @@ interface AppState {
 
   // Actions - Prompt
   setPrompt: (prompt: string) => void;
+  addAttachments: (files: File[]) => Promise<void>;
+  removeAttachment: (id: string) => void;
+  clearAttachments: () => void;
 
   // Actions - Run
   runCouncil: () => void;
@@ -204,6 +210,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessions: [],
   promptTemplates: [],
   currentPrompt: "",
+  attachments: [],
 
   // Run state
   isRunning: false,
@@ -503,12 +510,36 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setPrompt: (prompt) => set({ currentPrompt: prompt }),
 
+  addAttachments: async (files) => {
+    const read = (file: File) =>
+      new Promise<PromptAttachment>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () =>
+          resolve({
+            id: crypto.randomUUID(),
+            name: file.name,
+            fileType: file.type,
+            dataUrl: String(reader.result),
+            size: file.size,
+          });
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+    const added = await Promise.all(files.map(read));
+    set((state) => ({ attachments: [...state.attachments, ...added] }));
+  },
+
+  removeAttachment: (id) =>
+    set((state) => ({ attachments: state.attachments.filter((a) => a.id !== id) })),
+
+  clearAttachments: () => set({ attachments: [] }),
+
   // --- Run actions ---
 
   runCouncil: () => {
-    const { currentPrompt, members, judgeModel, judgeProvider } = get();
+    const { currentPrompt, members, judgeModel, judgeProvider, attachments } = get();
     if (
-      !currentPrompt.trim() ||
+      (!currentPrompt.trim() && attachments.length === 0) ||
       members.filter((m) => m.enabled).length === 0
     ) {
       return;
@@ -521,6 +552,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       status: "running",
       personaResults: {},
       startedAt: Date.now(),
+      attachments: attachments.map((a) => ({ name: a.name, fileType: a.fileType })),
     };
 
     // Seed per-member statuses so the UI shows every enabled member as queued
@@ -529,17 +561,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (m.enabled) personaStatuses[m.id] = "waiting";
     }
 
+    const runAttachments = attachments.map((a) => ({
+      name: a.name,
+      fileType: a.fileType,
+      dataUrl: a.dataUrl,
+    }));
+
     set({
       isRunning: true,
       activeRun,
       error: null,
       personaStatuses,
       judgeStatus: "idle",
+      attachments: [],
     });
 
     // Backend dispatches personas in parallel and streams results back as
     // Tauri events (see listeners at the bottom of this file).
-    bridge.runCouncil(currentPrompt, judgeModel, judgeProvider).catch((err) => {
+    bridge.runCouncil(currentPrompt, judgeModel, judgeProvider, runAttachments).catch((err) => {
       set((state) => ({
         isRunning: false,
         error: String(err),
@@ -804,6 +843,7 @@ export const selectMembers = (s: AppState) => s.members;
 export const selectSessions = (s: AppState) => s.sessions;
 export const selectPromptTemplates = (s: AppState) => s.promptTemplates;
 export const selectCurrentPrompt = (s: AppState) => s.currentPrompt;
+export const selectAttachments = (s: AppState) => s.attachments;
 export const selectIsRunning = (s: AppState) => s.isRunning;
 export const selectActiveRun = (s: AppState) => s.activeRun;
 export const selectPersonaStatuses = (s: AppState) => s.personaStatuses;

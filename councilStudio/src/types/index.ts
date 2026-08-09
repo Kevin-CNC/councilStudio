@@ -102,6 +102,28 @@ export interface Citation {
   personaId: string;
 }
 
+// In-memory image attachment held on the current prompt input. Never persisted.
+export interface PromptAttachment {
+  id: string;
+  name: string;
+  fileType: string;
+  dataUrl: string;
+  size: number;
+}
+
+// Payload shape sent to the backend for a single run.
+export interface RunAttachment {
+  name: string;
+  fileType: string;
+  dataUrl: string;
+}
+
+// Persisted session reference — metadata only, never the image bytes.
+export interface AttachmentMeta {
+  name: string;
+  fileType: string;
+}
+
 export interface CouncilRun {
   id: string;
   configId: string;
@@ -111,6 +133,7 @@ export interface CouncilRun {
   judgeResult?: JudgeResult;
   startedAt: number;
   completedAt?: number;
+  attachments?: AttachmentMeta[];
 }
 
 export interface Session {

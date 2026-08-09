@@ -4,7 +4,7 @@
 //! resolves credentials and hands a single `ChatRequest` to
 //! `providers::chat_completion` / `providers::judge_call`.
 
-use crate::cmds::{JudgeResult, Persona, PersonaResult};
+use crate::cmds::{JudgeResult, Persona, PersonaResult, RunAttachment};
 use crate::providers::ChatRequest;
 use tauri::{Emitter, Manager};
 
@@ -36,6 +36,7 @@ pub async fn run_council(
     personas: &[Persona],
     judge_model: &str,
     judge_provider: &str,
+    attachments: &[RunAttachment],
 ) -> Result<(), String> {
     let run_id = uuid::Uuid::new_v4().to_string();
 
@@ -68,6 +69,7 @@ pub async fn run_council(
         let persona = persona.clone();
         let api_key = keys.get(&persona.provider).cloned();
         let base_url = keys.get(&format!("{}_url", persona.provider)).cloned();
+        let attachments = attachments.to_vec();
 
         let task = tokio::spawn(async move {
             let started_at = std::time::SystemTime::now()
@@ -100,6 +102,7 @@ pub async fn run_council(
                     user_prompt: &prompt,
                     temperature: persona.temp,
                     max_tokens: persona.max_tokens,
+                    attachments: &attachments,
                 },
             )
             .await;
@@ -164,6 +167,7 @@ pub async fn run_council(
             user_prompt: &synthesis_prompt,
             temperature: 0.7,
             max_tokens: 4096,
+            attachments,
         },
     )
     .await;

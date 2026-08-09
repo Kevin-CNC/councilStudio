@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAppStore, selectCurrentPrompt, selectMembers, selectIsRunning, selectJudgeModel, selectJudgeProvider } from "@/stores/appStore";
+import { useAppStore, selectCurrentPrompt, selectMembers, selectIsRunning, selectJudgeModel, selectJudgeProvider, selectAttachments } from "@/stores/appStore";
 import { PromptHistory } from "./PromptHistory";
 import { CompatibilityWarningDialog } from "./CompatibilityWarningDialog";
 import { JudgeConfigDialog } from "./JudgeConfigDialog";
@@ -24,6 +24,7 @@ import {
   Mic,
   BookOpen,
   Gavel,
+  X,
 } from "lucide-react";
 
 const MAX_CHARS = 4000;
@@ -37,14 +38,19 @@ export function PromptEditor() {
   const judgeModel = useAppStore(selectJudgeModel);
   const judgeProvider = useAppStore(selectJudgeProvider);
   const setJudge = useAppStore((s) => s.setJudge);
+  const attachments = useAppStore(selectAttachments);
+  const addAttachments = useAppStore((s) => s.addAttachments);
+  const removeAttachment = useAppStore((s) => s.removeAttachment);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const charCount = currentPrompt.length;
   const [isChecking, setIsChecking] = useState(false);
   const [compatDialogOpen, setCompatDialogOpen] = useState(false);
   const [judgeConfigOpen, setJudgeConfigOpen] = useState(false);
   const [incompatibleChecks, setIncompatibleChecks] = useState<MemberCompatibilityCheck[]>([]);
-  const canSubmit = currentPrompt.trim().length > 0 && !isRunning && !isChecking;
+  const canSubmit =
+    (currentPrompt.trim().length > 0 || attachments.length > 0) && !isRunning && !isChecking;
   const enabledCount = members.filter((m) => m.enabled).length;
   const judgeConfigured = judgeModel.trim().length > 0;
 
@@ -83,7 +89,7 @@ export function PromptEditor() {
           provider: m.provider,
           model: m.model,
         })),
-        requiredInputModalities: ["text"],
+        requiredInputModalities: attachments.length ? ["image", "text"] : ["text"],
         requiredOutputModalities: ["text"],
       });
 
@@ -101,7 +107,16 @@ export function PromptEditor() {
     } finally {
       setIsChecking(false);
     }
-  }, [canSubmit, judgeConfigured, members, runCouncil]);
+  }, [canSubmit, judgeConfigured, members, runCouncil, attachments]);
+
+  const handleFilesSelected = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? []);
+      if (files.length > 0) addAttachments(files);
+      e.target.value = "";
+    },
+    [addAttachments]
+  );
 
   return (
     <motion.div
@@ -117,6 +132,29 @@ export function PromptEditor() {
           <span>{enabledCount} members active</span>
         </div>
       </div>
+
+      {/* Attachment thumbnails */}
+      {attachments.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {attachments.map((a) => (
+            <div
+              key={a.id}
+              className="relative flex h-14 w-14 items-center justify-center overflow-hidden rounded-md border border-border bg-muted"
+              title={a.name}
+            >
+              <img src={a.dataUrl} alt={a.name} className="h-full w-full object-cover" />
+              <button
+                type="button"
+                onClick={() => removeAttachment(a.id)}
+                className="absolute right-0.5 top-0.5 rounded-full bg-background/80 p-0.5 text-foreground hover:bg-background"
+                aria-label={`Remove ${a.name}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Textarea */}
       <div className="relative flex-1">
@@ -148,7 +186,21 @@ export function PromptEditor() {
 
       {/* Toolbar */}
       <div className="mt-2 flex items-center gap-1.5">
-        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={handleFilesSelected}
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 text-muted-foreground"
+          disabled={isRunning}
+          onClick={() => fileInputRef.current?.click()}
+        >
           <Paperclip className="h-4 w-4" />
         </Button>
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
