@@ -146,9 +146,33 @@ interface SessionSummaryDto {
 
 interface SessionRowDto extends SessionSummaryDto {
   runJson: string;
+  rawResponsesJson: string;
 }
 
 function sessionFromRow(row: SessionRowDto): Session {
+  const run = JSON.parse(row.runJson) as CouncilRun;
+
+  // Merge stored raw responses back onto the loaded run so the rest of the UI
+  // reads them uniformly off the CouncilRun. Defensive: corrupt/missing JSON
+  // must not break session loading.
+  let rawMap: Record<string, string> = {};
+  if (row.rawResponsesJson?.trim()) {
+    try {
+      rawMap = JSON.parse(row.rawResponsesJson) as Record<string, string>;
+    } catch {
+      rawMap = {};
+    }
+  }
+  if (run.personaResults) {
+    for (const r of run.personaResults) {
+      const raw = rawMap[r.personaId];
+      if (raw) r.rawResponse = raw;
+    }
+  }
+  if (run.judgeResult && rawMap.judge) {
+    run.judgeResult.rawResponse = rawMap.judge;
+  }
+
   return {
     id: row.id,
     title: row.title,
@@ -164,7 +188,7 @@ function sessionFromRow(row: SessionRowDto): Session {
     updatedAt: row.updatedAt,
     pinned: row.pinned,
     tags: row.tags,
-    run: JSON.parse(row.runJson) as CouncilRun,
+    run,
   };
 }
 
@@ -172,6 +196,16 @@ function sessionFromRow(row: SessionRowDto): Session {
  * Persist a session (upsert by id). Called after a council run completes.
  */
 export async function saveSession(session: Session): Promise<void> {
+  const rawMap: Record<string, string | undefined> = {};
+  if (session.run) {
+    for (const r of session.run.personaResults) {
+      if (r.rawResponse) rawMap[r.personaId] = r.rawResponse;
+    }
+    if (session.run.judgeResult?.rawResponse) {
+      rawMap.judge = session.run.judgeResult.rawResponse;
+    }
+  }
+
   return invoke<void>("save_session", {
     payload: {
       id: session.id,
@@ -187,6 +221,7 @@ export async function saveSession(session: Session): Promise<void> {
       createdAt: session.createdAt,
       updatedAt: session.updatedAt,
       runJson: JSON.stringify(session.run),
+      rawResponsesJson: JSON.stringify(rawMap),
     },
   });
 }
