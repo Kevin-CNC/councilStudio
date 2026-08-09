@@ -72,6 +72,7 @@ export interface PersonaResult {
   status: "running" | "completed" | "failed" | "cancelled";
   content: string;
   error?: string;
+  rawResponse?: string;
   tokensIn: number;
   tokensOut: number;
   latencyMs: number;
@@ -92,6 +93,7 @@ export interface JudgeResult {
   tokensIn: number;
   tokensOut: number;
   latencyMs: number;
+  rawResponse?: string;
 }
 
 export interface Citation {
