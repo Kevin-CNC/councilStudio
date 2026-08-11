@@ -38,6 +38,13 @@ export function ResponsePanel() {
       }))
     );
 
+  // Hooks must run unconditionally — derive empty values when no run is active.
+  const judgeResult = activeRun?.judgeResult;
+  const results = useMemo(
+    () => (activeRun ? Object.values(activeRun.personaResults) : []),
+    [activeRun]
+  );
+
   if (!activeRun) {
     return (
       <div id="response-panel-empty-state" className="flex h-full flex-col items-center justify-center text-center p-8">
@@ -57,12 +64,6 @@ export function ResponsePanel() {
       </div>
     );
   }
-
-  const judgeResult = activeRun.judgeResult;
-  const results = useMemo(
-    () => Object.values(activeRun.personaResults),
-    [activeRun.personaResults]
-  );
 
   return (
     <div id="response-panel-content" className="flex h-full flex-col">
