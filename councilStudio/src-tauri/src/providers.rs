@@ -380,7 +380,7 @@ async fn call_anthropic_wire(
     let data: AnthropicResponse = serde_json::from_str(&raw)
         .map_err(|e| format!("Anthropic parse: {e}"))?;
     let content = data.content.first().map(|c| c.text.clone()).unwrap_or_default();
-    Ok((content, data.usage.input_tokens, data.usage.output_tokens, raw))
+    Ok((content, data.usage.input_tokens, data.usage.output_tokens, raw.trim().to_string()))
 }
 
 async fn call_openai_wire(
@@ -444,7 +444,7 @@ async fn call_openai_wire(
         .first()
         .map(|c| c.message.content.clone())
         .unwrap_or_default();
-    Ok((content, data.usage.prompt_tokens, data.usage.completion_tokens, raw))
+    Ok((content, data.usage.prompt_tokens, data.usage.completion_tokens, raw.trim().to_string()))
 }
 
 async fn call_ollama_wire(
@@ -501,7 +501,7 @@ async fn call_ollama_wire(
         data.message.content,
         data.prompt_eval_count.unwrap_or(0),
         data.eval_count.unwrap_or(0),
-        raw,
+        raw.trim().to_string(),
     ))
 }
 
