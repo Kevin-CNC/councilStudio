@@ -16,7 +16,6 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeft,
-  Compass,
   UserCircle,
 } from "lucide-react";
 
@@ -86,27 +85,25 @@ export function Sidebar() {
       )}
     >
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-border px-4">
+      <div className={cn("flex h-14 items-center gap-2 border-b border-border px-4", !sidebarOpen && "justify-center px-0")}>
+        <img
+          src="/councilStudio_logo.svg"
+          alt="Council Studio logo"
+          className="app-logo app-logo-light h-7 w-7 shrink-0"
+          draggable={false}
+        />
+        <img
+          src="/councilStudio_logo_dark.svg"
+          alt=""
+          aria-hidden="true"
+          className="app-logo app-logo-dark h-7 w-7 shrink-0"
+          draggable={false}
+        />
         {sidebarOpen && (
-          <>
-            <img
-              src="/councilStudio_logo.svg"
-              alt="Council Studio logo"
-              className="app-logo app-logo-light h-7 w-7 shrink-0"
-              draggable={false}
-            />
-            <img
-              src="/councilStudio_logo_dark.svg"
-              alt=""
-              aria-hidden="true"
-              className="app-logo app-logo-dark h-7 w-7 shrink-0"
-              draggable={false}
-            />
-            <div className="flex flex-col overflow-hidden">
-              <span className="text-sm font-bold text-foreground truncate">Council Studio</span>
-              <span className="text-[11px] text-muted-foreground truncate">AI Council v0.1</span>
-            </div>
-          </>
+          <div className="flex flex-col overflow-hidden">
+            <span className="text-sm font-bold text-foreground truncate">Council Studio</span>
+            <span className="text-[11px] text-muted-foreground truncate">AI Council v0.1</span>
+          </div>
         )}
       </div>
 
