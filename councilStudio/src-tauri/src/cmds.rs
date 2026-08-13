@@ -87,6 +87,7 @@ pub struct PersonaResult {
     pub cost: f64,
     pub started_at: u64,
     pub completed_at: Option<u64>,
+    pub raw_response: Option<String>,
 }
 
 
@@ -104,6 +105,7 @@ pub struct JudgeResult {
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub latency_ms: u64,
+    pub raw_response: Option<String>,
 }
 
 
@@ -202,6 +204,7 @@ pub struct SessionRow {
     pub pinned: bool,
     pub tags: Vec<String>,
     pub run_json: String,
+    pub raw_responses_json: String,
 }
 
 /// Input for `save_session` — an upsert keyed on `id`.
@@ -221,6 +224,7 @@ pub struct SessionCreate {
     pub created_at: i64,
     pub updated_at: i64,
     pub run_json: String,
+    pub raw_responses_json: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -292,6 +296,7 @@ fn session_row_from_row(row: &rusqlite::Row) -> Result<SessionRow, rusqlite::Err
         pinned: row.get("pinned")?,
         tags: serde_json::from_str(&tags_json).unwrap_or_default(),
         run_json: row.get("run_json")?,
+        raw_responses_json: row.get("raw_responses_json")?,
     })
 }
 
@@ -319,8 +324,9 @@ pub fn save_session(state: State<DbState>, payload: SessionCreate) -> Result<(),
     conn.execute(
         "INSERT INTO sessions
             (id, title, prompt, config_id, config_name, status, persona_count,
-             tokens_used, total_cost, duration_ms, created_at, updated_at, run_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             tokens_used, total_cost, duration_ms, created_at, updated_at, run_json,
+             raw_responses_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             prompt = excluded.prompt,
@@ -332,7 +338,8 @@ pub fn save_session(state: State<DbState>, payload: SessionCreate) -> Result<(),
             total_cost = excluded.total_cost,
             duration_ms = excluded.duration_ms,
             updated_at = excluded.updated_at,
-            run_json = excluded.run_json",
+            run_json = excluded.run_json,
+            raw_responses_json = excluded.raw_responses_json",
         params![
             payload.id,
             payload.title,
@@ -347,6 +354,7 @@ pub fn save_session(state: State<DbState>, payload: SessionCreate) -> Result<(),
             payload.created_at,
             payload.updated_at,
             payload.run_json,
+            payload.raw_responses_json,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -392,7 +400,7 @@ pub fn get_session(state: State<DbState>, request: IdRequest) -> Result<SessionR
 
     conn.query_row(
         "SELECT id, title, prompt, config_id, config_name, status, persona_count,
-                tokens_used, total_cost, duration_ms, created_at, updated_at, pinned, tags, run_json
+                tokens_used, total_cost, duration_ms, created_at, updated_at, pinned, tags, run_json, raw_responses_json
          FROM sessions
          WHERE id = ?1",
         [&request.id],
@@ -440,7 +448,7 @@ pub fn pin_session(state: State<DbState>, request: IdRequest) -> Result<SessionR
 
     conn.query_row(
         "SELECT id, title, prompt, config_id, config_name, status, persona_count,
-                tokens_used, total_cost, duration_ms, created_at, updated_at, pinned, tags, run_json
+                tokens_used, total_cost, duration_ms, created_at, updated_at, pinned, tags, run_json, raw_responses_json
          FROM sessions
          WHERE id = ?1",
         [&request.id],

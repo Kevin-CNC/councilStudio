@@ -174,7 +174,7 @@ pub async fn chat_completion(
 ) -> Result<PersonaResult, String> {
     let started_at = now_millis();
 
-    let (content, tokens_in, tokens_out) = match req.provider {
+    let (content, tokens_in, tokens_out, raw_response) = match req.provider {
         "anthropic" => {
             let key = req
                 .api_key
@@ -227,6 +227,7 @@ pub async fn chat_completion(
         cost: cost_calc(req.provider, req.model, tokens_in, tokens_out),
         started_at,
         completed_at: Some(completed_at),
+        raw_response: Some(raw_response),
     })
 }
 
@@ -297,6 +298,7 @@ pub async fn judge_call(
             tokens_in: result.tokens_in,
             tokens_out: result.tokens_out,
             latency_ms,
+            raw_response: result.raw_response.clone(),
         }),
         Err(_) => {
             // Judge didn't return valid JSON; keep raw content as synthesis.
@@ -311,6 +313,7 @@ pub async fn judge_call(
                 tokens_in: result.tokens_in,
                 tokens_out: result.tokens_out,
                 latency_ms,
+                raw_response: result.raw_response.clone(),
             })
         }
     }
@@ -324,7 +327,7 @@ async fn call_anthropic_wire(
     client: &reqwest::Client,
     api_key: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, u64, u64), String> {
+) -> Result<(String, u64, u64, String), String> {
     let user_message = if req.attachments.is_empty() {
         Message::text("user", req.user_prompt)
     } else {
@@ -370,12 +373,14 @@ async fn call_anthropic_wire(
         return Err(format!("Anthropic HTTP {status}: {text}"));
     }
 
-    let data: AnthropicResponse = resp
-        .json()
+    let raw = resp
+        .text()
         .await
+        .map_err(|e| format!("Anthropic read body: {e}"))?;
+    let data: AnthropicResponse = serde_json::from_str(&raw)
         .map_err(|e| format!("Anthropic parse: {e}"))?;
     let content = data.content.first().map(|c| c.text.clone()).unwrap_or_default();
-    Ok((content, data.usage.input_tokens, data.usage.output_tokens))
+    Ok((content, data.usage.input_tokens, data.usage.output_tokens, raw.trim().to_string()))
 }
 
 async fn call_openai_wire(
@@ -383,7 +388,7 @@ async fn call_openai_wire(
     api_key: &str,
     url: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, u64, u64), String> {
+) -> Result<(String, u64, u64, String), String> {
     let user_message = if req.attachments.is_empty() {
         Message::text("user", req.user_prompt)
     } else {
@@ -428,23 +433,25 @@ async fn call_openai_wire(
         return Err(format!("{} HTTP {status}: {text}", req.provider));
     }
 
-    let data: OpenAiResponse = resp
-        .json()
+    let raw = resp
+        .text()
         .await
+        .map_err(|e| format!("{} read body: {e}", req.provider))?;
+    let data: OpenAiResponse = serde_json::from_str(&raw)
         .map_err(|e| format!("{} parse: {e}", req.provider))?;
     let content = data
         .choices
         .first()
         .map(|c| c.message.content.clone())
         .unwrap_or_default();
-    Ok((content, data.usage.prompt_tokens, data.usage.completion_tokens))
+    Ok((content, data.usage.prompt_tokens, data.usage.completion_tokens, raw.trim().to_string()))
 }
 
 async fn call_ollama_wire(
     client: &reqwest::Client,
     base_url: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, u64, u64), String> {
+) -> Result<(String, u64, u64, String), String> {
     let user_message = if req.attachments.is_empty() {
         Message::text("user", req.user_prompt)
     } else {
@@ -484,14 +491,17 @@ async fn call_ollama_wire(
         return Err(format!("Ollama HTTP {status}: {text}"));
     }
 
-    let data: OllamaResponse = resp
-        .json()
+    let raw = resp
+        .text()
         .await
+        .map_err(|e| format!("Ollama read body: {e}"))?;
+    let data: OllamaResponse = serde_json::from_str(&raw)
         .map_err(|e| format!("Ollama parse: {e}"))?;
     Ok((
         data.message.content,
         data.prompt_eval_count.unwrap_or(0),
         data.eval_count.unwrap_or(0),
+        raw.trim().to_string(),
     ))
 }
 

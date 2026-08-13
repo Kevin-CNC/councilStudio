@@ -77,6 +77,31 @@
   contain: strict;
 }
 
+/* Slim overlay-style scrollbar: no track, rounded thumb only (matches ScrollArea thumb) */
+.styled-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+.styled-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.styled-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.styled-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.styled-scrollbar:hover::-webkit-scrollbar-thumb {
+  background-color: var(--color-muted-foreground);
+}
+.styled-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Streaming cursor — blinks 3 times then stops */
 @keyframes blink {
   50% { opacity: 0; }

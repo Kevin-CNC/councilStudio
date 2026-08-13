@@ -25,9 +25,12 @@ import {
   BookOpen,
   Gavel,
   X,
+  GripHorizontal,
 } from "lucide-react";
 
 const MAX_CHARS = 4000;
+const MIN_EDITOR_HEIGHT = 120;
+const DEFAULT_EDITOR_HEIGHT = 200;
 
 export function PromptEditor() {
   const currentPrompt = useAppStore(selectCurrentPrompt);
@@ -44,6 +47,36 @@ export function PromptEditor() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [editorHeight, setEditorHeight] = useState(DEFAULT_EDITOR_HEIGHT);
+  const dragState = useRef<{ startY: number; startH: number } | null>(null);
+
+  // Resize: mutate textarea style during drag (no re-render), commit to state on release.
+  const handleResizeStart = useCallback((e: React.PointerEvent) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    e.preventDefault();
+    dragState.current = { startY: e.clientY, startH: ta.getBoundingClientRect().height };
+    document.body.style.cursor = "ns-resize";
+
+    const clamp = (h: number) =>
+      Math.min(window.innerHeight * 0.7, Math.max(MIN_EDITOR_HEIGHT, h));
+
+    const onMove = (ev: PointerEvent) => {
+      const d = dragState.current;
+      if (!d) return;
+      ta.style.height = `${clamp(d.startH + ev.clientY - d.startY)}px`;
+    };
+    const onUp = (ev: PointerEvent) => {
+      const d = dragState.current;
+      dragState.current = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      if (d) setEditorHeight(clamp(d.startH + ev.clientY - d.startY));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }, []);
   const charCount = currentPrompt.length;
   const [isChecking, setIsChecking] = useState(false);
   const [compatDialogOpen, setCompatDialogOpen] = useState(false);
@@ -157,19 +190,36 @@ export function PromptEditor() {
       )}
 
       {/* Textarea */}
-      <div className="relative flex-1">
+      <div className="relative">
         <Textarea
           ref={textareaRef}
           placeholder="Ask your council anything..."
           value={currentPrompt}
           onChange={(e) => setPrompt(e.target.value.slice(0, MAX_CHARS))}
           disabled={isRunning}
+          style={{ height: editorHeight }}
           className={cn(
-            "min-h-[200px] resize-none text-sm leading-relaxed",
+            "styled-scrollbar resize-none text-sm leading-relaxed",
             "focus-visible:ring-2 focus-visible:ring-primary/30",
             isRunning && "opacity-60"
           )}
         />
+        {/* Textured drag handle on bottom edge — height commits on release */}
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Drag to resize prompt box"
+          onPointerDown={handleResizeStart}
+          className={cn(
+            "absolute inset-x-0 -bottom-[7px] flex h-[14px] cursor-ns-resize items-center justify-center",
+            "text-muted-foreground/50 transition-colors hover:text-muted-foreground",
+            isRunning && "pointer-events-none opacity-40"
+          )}
+        >
+          <div className="flex h-[6px] w-14 items-center justify-center rounded-full border border-border bg-muted shadow-sm">
+            <GripHorizontal className="h-3 w-3" />
+          </div>
+        </div>
       </div>
 
       {/* Character counter */}
