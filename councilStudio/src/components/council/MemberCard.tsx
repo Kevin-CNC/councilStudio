@@ -12,8 +12,7 @@ import {
   Edit,
   Copy,
   Trash2,
-  Eye,
-  EyeOff,
+  UserMinus,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -78,7 +77,8 @@ export const MemberCard = memo(function MemberCard({ persona, runStatus, dragHan
   const setMemberFormOpen = useAppStore((s) => s.setMemberFormOpen);
   const deleteMember = useAppStore((s) => s.deleteMember);
   const duplicateMember = useAppStore((s) => s.duplicateMember);
-  const toggleMemberEnabled = useAppStore((s) => s.toggleMemberEnabled);
+  const currentCouncilId = useAppStore((s) => s.currentCouncilId);
+  const removeMemberFromCouncil = useAppStore((s) => s.removeMemberFromCouncil);
   const setSwapTargetId = useAppStore((s) => s.setSwapTargetId);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -166,14 +166,13 @@ export const MemberCard = memo(function MemberCard({ persona, runStatus, dragHan
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
-                onClick={() => toggleMemberEnabled(persona.id)}
-                title={persona.enabled ? "Disable" : "Enable"}
+                onClick={() =>
+                  currentCouncilId &&
+                  removeMemberFromCouncil(currentCouncilId, persona.id)
+                }
+                title="Remove from council"
               >
-                {persona.enabled ? (
-                  <Eye className="h-3 w-3" />
-                ) : (
-                  <EyeOff className="h-3 w-3" />
-                )}
+                <UserMinus className="h-3 w-3" />
               </Button>
 
               <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>

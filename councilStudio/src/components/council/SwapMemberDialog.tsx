@@ -12,6 +12,7 @@ import { toast } from "@/components/ui/toaster";
 import {
   useAppStore,
   selectMembers,
+  selectCurrentCouncil,
   selectSwapTargetId,
   selectIsRunning,
 } from "@/stores/appStore";
@@ -20,11 +21,11 @@ import { ArrowLeftRight, Plus } from "lucide-react";
 
 export function SwapMemberDialog() {
   const members = useAppStore(selectMembers);
+  const currentCouncil = useAppStore(selectCurrentCouncil);
   const swapTargetId = useAppStore(selectSwapTargetId);
   const isRunning = useAppStore(selectIsRunning);
   const setSwapTargetId = useAppStore((s) => s.setSwapTargetId);
   const setMemberFormOpen = useAppStore((s) => s.setMemberFormOpen);
-  const swapMember = useAppStore((s) => s.swapMember);
 
   const target = members.find((m) => m.id === swapTargetId);
 
@@ -33,15 +34,20 @@ export function SwapMemberDialog() {
     if (swapTargetId && !target) setSwapTargetId(null);
   }, [swapTargetId, target, setSwapTargetId]);
 
-  const candidates = members.filter(
-    (m) => !m.enabled && m.id !== swapTargetId
-  );
+  // Enabled library members not already in the current council.
+  const candidates = currentCouncil
+    ? members.filter(
+        (m) => m.enabled && !currentCouncil.memberIds.includes(m.id)
+      )
+    : [];
 
   const handleSwap = async (inId: string, inName: string) => {
-    if (!swapTargetId || isRunning) return;
+    if (!swapTargetId || !currentCouncil || isRunning) return;
     const outName = target?.name ?? "member";
+    const { removeMemberFromCouncil, addMembersToCouncil } = useAppStore.getState();
     try {
-      await swapMember(swapTargetId, inId);
+      await removeMemberFromCouncil(currentCouncil.id, swapTargetId);
+      await addMembersToCouncil(currentCouncil.id, [inId]);
       toast("success", `Swapped ${outName} with ${inName}`);
       setSwapTargetId(null);
     } catch {

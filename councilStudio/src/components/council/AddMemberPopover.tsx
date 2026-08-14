@@ -7,7 +7,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuSubContent,
 } from "@/components/ui/dropdown-menu";
-import { useAppStore, selectMembers } from "@/stores/appStore";
+import { useAppStore, selectMembers, selectCurrentCouncil } from "@/stores/appStore";
 import { PROVIDER_LABELS } from "@/lib/constants";
 import { Plus, UserPlus } from "lucide-react";
 
@@ -17,12 +17,15 @@ interface AddMemberPopoverProps {
 
 /**
  * "Add Council Member" dropdown — choose between creating a new persona or
- * enabling an existing disabled one. Implemented with DropdownMenu primitives
- * (no popover dependency installed).
+ * adding an enabled library member that is not already in the current council.
+ * Implemented with DropdownMenu primitives (no popover dependency installed).
  */
 export function AddMemberPopover({ children }: AddMemberPopoverProps) {
   const members = useAppStore(selectMembers);
-  const disabledMembers = members.filter((m) => !m.enabled);
+  const currentCouncil = useAppStore(selectCurrentCouncil);
+  const candidates = currentCouncil
+    ? members.filter((m) => m.enabled && !currentCouncil.memberIds.includes(m.id))
+    : [];
 
   return (
     <DropdownMenu>
@@ -38,16 +41,19 @@ export function AddMemberPopover({ children }: AddMemberPopoverProps) {
             <UserPlus className="h-3.5 w-3.5 mr-2" /> Add from Existing
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent className="w-64">
-            {disabledMembers.length === 0 ? (
+            {candidates.length === 0 ? (
               <DropdownMenuItem disabled>
-                No other members available. Create one first.
+                No enabled members available. Enable one in the library first.
               </DropdownMenuItem>
             ) : (
-              disabledMembers.map((m) => (
+              candidates.map((m) => (
                 <DropdownMenuItem
                   key={m.id}
                   onClick={() =>
-                    useAppStore.getState().updateMember(m.id, { enabled: true })
+                    currentCouncil &&
+                    useAppStore
+                      .getState()
+                      .addMembersToCouncil(currentCouncil.id, [m.id])
                   }
                 >
                   <span
