@@ -16,7 +16,6 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeft,
-  Compass,
   UserCircle,
 } from "lucide-react";
 
@@ -86,14 +85,24 @@ export function Sidebar() {
       )}
     >
       {/* Logo */}
-      <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-          <Compass className="h-4 w-4" />
-        </div>
+      <div className={cn("flex h-14 items-center gap-2 border-b border-border px-4", !sidebarOpen && "justify-center px-0")}>
+        <img
+          src="/councilStudio_logo.svg"
+          alt="Council Studio logo"
+          className="app-logo app-logo-light h-7 w-7 shrink-0"
+          draggable={false}
+        />
+        <img
+          src="/councilStudio_logo_dark.svg"
+          alt=""
+          aria-hidden="true"
+          className="app-logo app-logo-dark h-7 w-7 shrink-0"
+          draggable={false}
+        />
         {sidebarOpen && (
           <div className="flex flex-col overflow-hidden">
             <span className="text-sm font-bold text-foreground truncate">Council Studio</span>
-            <span className="text-[11px] text-muted-foreground truncate">AI Council v0.1</span>
+            <span className="text-[11px] text-muted-foreground truncate">AI Council v1.0</span>
           </div>
         )}
       </div>

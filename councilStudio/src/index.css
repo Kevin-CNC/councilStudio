@@ -45,6 +45,35 @@
   }
 }
 
+/* App logo (sidebar header): light/dark variants swapped via the .dark class,
+   clockwise spin on hover. Keyed off .dark (not the Tailwind dark: variant,
+   which follows prefers-color-scheme) so it tracks the in-app theme toggle. */
+.app-logo-dark {
+  display: none;
+}
+.dark .app-logo-light {
+  display: none;
+}
+.dark .app-logo-dark {
+  display: block;
+}
+.app-logo:hover {
+  animation: app-logo-spin 0.6s ease-in-out;
+}
+@keyframes app-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-logo:hover {
+    animation: none;
+  }
+}
+
 /* Dark theme palette — overrides the @theme vars when <html> has .dark.
    Unlayered on purpose so it wins the cascade over the @theme :root vars above. */
 .dark {
