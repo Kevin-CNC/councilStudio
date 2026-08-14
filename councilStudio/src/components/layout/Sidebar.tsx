@@ -102,7 +102,7 @@ export function Sidebar() {
         {sidebarOpen && (
           <div className="flex flex-col overflow-hidden">
             <span className="text-sm font-bold text-foreground truncate">Council Studio</span>
-            <span className="text-[11px] text-muted-foreground truncate">AI Council v0.1</span>
+            <span className="text-[11px] text-muted-foreground truncate">AI Council v1.0</span>
           </div>
         )}
       </div>
