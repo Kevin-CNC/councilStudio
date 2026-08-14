@@ -5,6 +5,7 @@ import type {
   PersonaResult,
   JudgeResult,
   Session,
+  Council,
   CouncilRun,
   PromptTemplate,
   Theme,
@@ -34,6 +35,7 @@ const LS_KEYS = {
   reducedMotion: "app-reduced-motion",
   judgeModel: "judge-model",
   judgeProvider: "judge-provider",
+  currentCouncilId: "current-council-id",
 } as const;
 
 function lsGet(key: string): string | null {
@@ -90,6 +92,9 @@ function toActiveRun(run: CouncilRun): ActiveRun {
 interface AppState {
   // Data
   members: Persona[];
+  councils: Council[];
+  /** Active council. Members run only when enabled AND in this council. */
+  currentCouncilId: string | null;
   sessions: Session[];
   promptTemplates: PromptTemplate[];
   currentPrompt: string;
@@ -147,6 +152,16 @@ interface AppState {
   toggleMemberEnabled: (id: string) => Promise<void>;
   deleteMembers: (ids: string[]) => Promise<void>;
   swapMember: (outId: string, inId: string) => Promise<void>;
+
+  // Actions - Councils
+  loadCouncils: () => Promise<void>;
+  createCouncil: (name: string) => Promise<void>;
+  selectCouncil: (id: string) => void;
+  renameCouncil: (id: string, name: string) => Promise<void>;
+  deleteCouncil: (id: string) => Promise<void>;
+  addMembersToCouncil: (councilId: string, memberIds: string[]) => Promise<void>;
+  removeMemberFromCouncil: (councilId: string, memberId: string) => Promise<void>;
+  reorderCouncilMembers: (councilId: string, memberIds: string[]) => Promise<void>;
   exportMembersToJSON: (title: string) => string;
   exportTemplatesToJSON: (title: string) => string;
   exportSessionsToJSON: (title: string) => string;
@@ -207,6 +222,8 @@ interface AppState {
 export const useAppStore = create<AppState>((set, get) => ({
   // Initial data — empty, loaded async from SQLite via Rust
   members: [],
+  councils: [],
+  currentCouncilId: null,
   sessions: [],
   promptTemplates: [],
   currentPrompt: "",
@@ -380,6 +397,105 @@ export const useAppStore = create<AppState>((set, get) => ({
     ]);
   },
 
+  // --- Council actions (async, backed by SQLite via Tauri) ---
+
+  loadCouncils: async () => {
+    set({ error: null });
+    try {
+      let councils = await bridge.listCouncils();
+      // First run on an existing install: seed one empty Default council.
+      if (councils.length === 0) {
+        councils = [await bridge.createCouncil("Default")];
+      }
+      const persisted = lsGet(LS_KEYS.currentCouncilId);
+      const currentCouncilId =
+        persisted && councils.some((c) => c.id === persisted)
+          ? persisted
+          : (councils[0]?.id ?? null);
+      set({ councils, currentCouncilId });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  createCouncil: async (name) => {
+    set({ error: null });
+    try {
+      const council = await bridge.createCouncil(name);
+      set((state) => ({
+        councils: [...state.councils, council],
+        currentCouncilId: council.id,
+      }));
+      lsSet(LS_KEYS.currentCouncilId, council.id);
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  selectCouncil: (id) => {
+    if (!get().councils.some((c) => c.id === id)) return;
+    set({ currentCouncilId: id });
+    lsSet(LS_KEYS.currentCouncilId, id);
+  },
+
+  renameCouncil: async (id, name) => {
+    set({ error: null });
+    try {
+      const updated = await bridge.updateCouncil(id, { name });
+      set((state) => ({
+        councils: state.councils.map((c) => (c.id === id ? updated : c)),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  deleteCouncil: async (id) => {
+    set({ error: null });
+    try {
+      await bridge.deleteCouncil(id);
+      set((state) => {
+        const councils = state.councils.filter((c) => c.id !== id);
+        const currentCouncilId =
+          state.currentCouncilId === id
+            ? (councils[0]?.id ?? null)
+            : state.currentCouncilId;
+        if (currentCouncilId) lsSet(LS_KEYS.currentCouncilId, currentCouncilId);
+        return { councils, currentCouncilId };
+      });
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  addMembersToCouncil: async (councilId, memberIds) => {
+    const council = get().councils.find((c) => c.id === councilId);
+    if (!council) return;
+    const merged = [
+      ...council.memberIds,
+      ...memberIds.filter((id) => !council.memberIds.includes(id)),
+    ];
+    if (merged.length === council.memberIds.length) return;
+    await setCouncilMemberIds(councilId, merged);
+  },
+
+  removeMemberFromCouncil: async (councilId, memberId) => {
+    const council = get().councils.find((c) => c.id === councilId);
+    if (!council || !council.memberIds.includes(memberId)) return;
+    await setCouncilMemberIds(
+      councilId,
+      council.memberIds.filter((id) => id !== memberId)
+    );
+  },
+
+  reorderCouncilMembers: async (councilId, memberIds) => {
+    if (!get().councils.some((c) => c.id === councilId)) return;
+    await setCouncilMemberIds(councilId, memberIds);
+  },
+
   exportMembersToJSON: (_title) => {
     const members = get().members;
     const items: MemberExportItem[] = members.map((m) => ({
@@ -538,16 +654,22 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   runCouncil: () => {
     const { currentPrompt, members, judgeModel, judgeProvider, attachments } = get();
+    const council = selectCurrentCouncil(get());
+    // Two-layer model: a member runs only when enabled AND in the active
+    // council. With no council resolved, fall back to all enabled members.
+    const runMembers = (
+      council ? selectCurrentCouncilMembers(get()) : members
+    ).filter((m) => m.enabled);
     if (
       (!currentPrompt.trim() && attachments.length === 0) ||
-      members.filter((m) => m.enabled).length === 0
+      runMembers.length === 0
     ) {
       return;
     }
 
     const activeRun: ActiveRun = {
       id: crypto.randomUUID(),
-      configId: "default",
+      configId: council?.id ?? "default",
       prompt: currentPrompt,
       status: "running",
       personaResults: {},
@@ -555,10 +677,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       attachments: attachments.map((a) => ({ name: a.name, fileType: a.fileType })),
     };
 
-    // Seed per-member statuses so the UI shows every enabled member as queued
+    // Seed per-member statuses so the UI shows every running member as queued
     const personaStatuses: Record<string, MemberRunStatus> = {};
-    for (const m of members) {
-      if (m.enabled) personaStatuses[m.id] = "waiting";
+    for (const m of runMembers) {
+      personaStatuses[m.id] = "waiting";
     }
 
     const runAttachments = attachments.map((a) => ({
@@ -578,15 +700,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // Backend dispatches personas in parallel and streams results back as
     // Tauri events (see listeners at the bottom of this file).
-    bridge.runCouncil(currentPrompt, judgeModel, judgeProvider, runAttachments).catch((err) => {
-      set((state) => ({
-        isRunning: false,
-        error: String(err),
-        activeRun: state.activeRun
-          ? { ...state.activeRun, status: "failed", completedAt: Date.now() }
-          : state.activeRun,
-      }));
-    });
+    bridge
+      .runCouncil(currentPrompt, judgeModel, judgeProvider, runAttachments, council?.id ?? null)
+      .catch((err) => {
+        set((state) => ({
+          isRunning: false,
+          error: String(err),
+          activeRun: state.activeRun
+            ? { ...state.activeRun, status: "failed", completedAt: Date.now() }
+            : state.activeRun,
+        }));
+      });
   },
 
   cancelRun: () => {
@@ -835,11 +959,54 @@ export const useAppStore = create<AppState>((set, get) => ({
   setImportPreviewData: (data) => set({ importPreviewData: data }),
 }));
 
+/**
+ * Optimistically set a council's ordered membership and persist it.
+ * Reloads councils from the backend on failure (mirrors reorderMembers).
+ */
+async function setCouncilMemberIds(
+  councilId: string,
+  memberIds: string[]
+): Promise<void> {
+  useAppStore.setState((state) => ({
+    error: null,
+    councils: state.councils.map((c) =>
+      c.id === councilId ? { ...c, memberIds } : c
+    ),
+  }));
+  try {
+    const updated = await bridge.updateCouncil(councilId, { memberIds });
+    useAppStore.setState((state) => ({
+      councils: state.councils.map((c) => (c.id === councilId ? updated : c)),
+    }));
+  } catch (e) {
+    useAppStore.setState({ error: String(e) });
+    try {
+      const fresh = await bridge.listCouncils();
+      useAppStore.setState({ councils: fresh });
+    } catch {
+      // best effort
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Named selectors — exported for fine-grained component subscriptions.
 // ---------------------------------------------------------------------------
 
 export const selectMembers = (s: AppState) => s.members;
+export const selectCouncils = (s: AppState) => s.councils;
+export const selectCurrentCouncilId = (s: AppState) => s.currentCouncilId;
+export const selectCurrentCouncil = (s: AppState) =>
+  s.councils.find((c) => c.id === s.currentCouncilId) ?? null;
+/** Members of the active council, in council order. Use with useShallow. */
+export function selectCurrentCouncilMembers(s: AppState): Persona[] {
+  const council = selectCurrentCouncil(s);
+  if (!council) return [];
+  const byId = new Map(s.members.map((m) => [m.id, m]));
+  return council.memberIds
+    .map((id) => byId.get(id))
+    .filter((m): m is Persona => m !== undefined);
+}
 export const selectSessions = (s: AppState) => s.sessions;
 export const selectPromptTemplates = (s: AppState) => s.promptTemplates;
 export const selectCurrentPrompt = (s: AppState) => s.currentPrompt;
@@ -955,7 +1122,8 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
         title: completedRun.prompt.slice(0, 60),
         prompt: completedRun.prompt,
         configId: completedRun.configId,
-        configName: "Default",
+        configName:
+          state.councils.find((c) => c.id === completedRun.configId)?.name ?? "Default",
         status: "completed",
         personaCount: resultsArray.length,
         tokensUsed: resultsArray.reduce(
@@ -997,7 +1165,8 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
         title: terminatedRun.prompt.slice(0, 60),
         prompt: terminatedRun.prompt,
         configId: terminatedRun.configId,
-        configName: "Default",
+        configName:
+          state.councils.find((c) => c.id === terminatedRun.configId)?.name ?? "Default",
         status: "terminated",
         personaCount: resultsArray.length,
         tokensUsed: resultsArray.reduce(
