@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "decorations": true,
         "title": "councilstudio",
         "width": 800,
         "height": 600
