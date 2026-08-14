@@ -9,6 +9,7 @@ import { seedDefaultMembers } from "@/lib/tauri-bridge";
 
 function App() {
   const loadMembers = useAppStore((s) => s.loadMembers);
+  const loadCouncils = useAppStore((s) => s.loadCouncils);
   const loadSessions = useAppStore((s) => s.loadSessions);
   const loadPromptTemplates = useAppStore((s) => s.loadPromptTemplates);
 
@@ -26,10 +27,10 @@ function App() {
           // DB already seeded or error — handled by store
         }
       }
-      await Promise.all([loadSessions(), loadPromptTemplates()]);
+      await Promise.all([loadCouncils(), loadSessions(), loadPromptTemplates()]);
     }
     init();
-  }, [loadMembers, loadSessions, loadPromptTemplates]);
+  }, [loadMembers, loadCouncils, loadSessions, loadPromptTemplates]);
 
   // Tauri event listener lifecycle — register once, clean up on unmount.
   // StrictMode mounts → cleans up → remounts before the async listen() calls
