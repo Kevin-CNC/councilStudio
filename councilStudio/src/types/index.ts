@@ -64,6 +64,19 @@ export interface CouncilConfig {
   retryCount: number;
 }
 
+/**
+ * A named, reusable council: an ordered subset of member ids. A member runs
+ * only when it is both enabled (available) and present in the active council.
+ * Sessions reference the council that produced them via configId/configName.
+ */
+export interface Council {
+  id: string;
+  name: string;
+  memberIds: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface PersonaResult {
   personaId: string;
   personaName: string;
