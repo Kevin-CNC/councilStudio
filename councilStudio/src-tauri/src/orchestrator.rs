@@ -15,7 +15,11 @@ fn build_judge_prompt(prompt: &str, results: &[PersonaResult]) -> String {
         prompt
     );
     for (i, r) in results.iter().enumerate() {
-        let status_label = if r.status == "failed" { " [FAILED]" } else { "" };
+        let status_label = if r.status == "failed" {
+            " [FAILED]"
+        } else {
+            ""
+        };
         p.push_str(&format!(
             "### Persona {}: {} ({}/{}){}\n{}\n\n",
             i + 1,

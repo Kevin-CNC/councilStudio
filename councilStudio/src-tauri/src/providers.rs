@@ -185,8 +185,13 @@ pub async fn chat_completion(
             let key = req
                 .api_key
                 .ok_or("No OpenAI API key configured".to_string())?;
-            call_openai_wire(client, key, "https://api.openai.com/v1/chat/completions", &req)
-                .await?
+            call_openai_wire(
+                client,
+                key,
+                "https://api.openai.com/v1/chat/completions",
+                &req,
+            )
+            .await?
         }
         "openrouter" => {
             let key = req
@@ -214,7 +219,7 @@ pub async fn chat_completion(
     let completed_at = now_millis();
 
     Ok(PersonaResult {
-        persona_id: String::new(),  // filled by orchestrator
+        persona_id: String::new(),   // filled by orchestrator
         persona_name: String::new(), // filled by orchestrator
         provider: req.provider.to_string(),
         model: req.model.to_string(),
@@ -377,10 +382,19 @@ async fn call_anthropic_wire(
         .text()
         .await
         .map_err(|e| format!("Anthropic read body: {e}"))?;
-    let data: AnthropicResponse = serde_json::from_str(&raw)
-        .map_err(|e| format!("Anthropic parse: {e}"))?;
-    let content = data.content.first().map(|c| c.text.clone()).unwrap_or_default();
-    Ok((content, data.usage.input_tokens, data.usage.output_tokens, raw.trim().to_string()))
+    let data: AnthropicResponse =
+        serde_json::from_str(&raw).map_err(|e| format!("Anthropic parse: {e}"))?;
+    let content = data
+        .content
+        .first()
+        .map(|c| c.text.clone())
+        .unwrap_or_default();
+    Ok((
+        content,
+        data.usage.input_tokens,
+        data.usage.output_tokens,
+        raw.trim().to_string(),
+    ))
 }
 
 async fn call_openai_wire(
@@ -408,10 +422,7 @@ async fn call_openai_wire(
 
     let body = OpenAiRequest {
         model: req.model.to_string(),
-        messages: vec![
-            Message::text("system", req.system_prompt),
-            user_message,
-        ],
+        messages: vec![Message::text("system", req.system_prompt), user_message],
         max_tokens: req.max_tokens,
         temperature: req.temperature,
     };
@@ -437,14 +448,19 @@ async fn call_openai_wire(
         .text()
         .await
         .map_err(|e| format!("{} read body: {e}", req.provider))?;
-    let data: OpenAiResponse = serde_json::from_str(&raw)
-        .map_err(|e| format!("{} parse: {e}", req.provider))?;
+    let data: OpenAiResponse =
+        serde_json::from_str(&raw).map_err(|e| format!("{} parse: {e}", req.provider))?;
     let content = data
         .choices
         .first()
         .map(|c| c.message.content.clone())
         .unwrap_or_default();
-    Ok((content, data.usage.prompt_tokens, data.usage.completion_tokens, raw.trim().to_string()))
+    Ok((
+        content,
+        data.usage.prompt_tokens,
+        data.usage.completion_tokens,
+        raw.trim().to_string(),
+    ))
 }
 
 async fn call_ollama_wire(
@@ -495,8 +511,8 @@ async fn call_ollama_wire(
         .text()
         .await
         .map_err(|e| format!("Ollama read body: {e}"))?;
-    let data: OllamaResponse = serde_json::from_str(&raw)
-        .map_err(|e| format!("Ollama parse: {e}"))?;
+    let data: OllamaResponse =
+        serde_json::from_str(&raw).map_err(|e| format!("Ollama parse: {e}"))?;
     Ok((
         data.message.content,
         data.prompt_eval_count.unwrap_or(0),
@@ -522,9 +538,7 @@ fn strip_code_fences(s: &str) -> &str {
         .strip_prefix("```json")
         .or_else(|| trimmed.strip_prefix("```"))
         .unwrap_or(trimmed);
-    let without_close = without_open
-        .strip_suffix("```")
-        .unwrap_or(without_open);
+    let without_close = without_open.strip_suffix("```").unwrap_or(without_open);
     without_close.trim()
 }
 
