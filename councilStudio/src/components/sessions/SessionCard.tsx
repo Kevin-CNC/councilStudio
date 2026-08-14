@@ -63,6 +63,7 @@ export const SessionCard = memo(function SessionCard({
               {new Date(session.createdAt).toLocaleDateString(undefined, {
                 month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
               })}
+              <span className="truncate">· {session.configName}</span>
             </div>
 
             <div className="flex items-center justify-between">
@@ -128,6 +129,7 @@ export const SessionCard = memo(function SessionCard({
                     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
                   })}
                 </span>
+                <span className="truncate">· {session.configName}</span>
               </div>
 
               <div className="flex items-center gap-3 text-[10px]">
