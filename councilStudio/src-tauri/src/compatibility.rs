@@ -150,8 +150,7 @@ pub async fn run_compatibility_check(
         let (issues, failed) = match cache_get(&key) {
             Some(cached) => cached,
             None => {
-                let (issues, failed) =
-                    check_member(&client, member, &request).await;
+                let (issues, failed) = check_member(&client, member, &request).await;
                 cache_put(key, issues.clone(), failed);
                 (issues, failed)
             }

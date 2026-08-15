@@ -258,7 +258,7 @@ export function MembersPage() {
                     />
                   </div>
                   <div className="pl-7">
-                    <MemberCard persona={persona} />
+                    <MemberCard persona={persona} variant="library" />
                   </div>
                 </motion.div>
               ))}

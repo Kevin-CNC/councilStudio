@@ -90,7 +90,6 @@ pub struct PersonaResult {
     pub raw_response: Option<String>,
 }
 
-
 /// Structured synthesis from the judge persona.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,7 +106,6 @@ pub struct JudgeResult {
     pub latency_ms: u64,
     pub raw_response: Option<String>,
 }
-
 
 /// A single image attachment sent with a run. Session-only; never persisted as bytes.
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -127,6 +125,9 @@ pub struct RunCouncilRequest {
     pub prompt: String,
     pub judge_model: String,
     pub judge_provider: String,
+    /// Council whose ordered membership runs. `None` runs all enabled members (legacy).
+    #[serde(default)]
+    pub council_id: Option<String>,
     #[serde(default)]
     pub attachments: Vec<RunAttachment>,
 }
@@ -161,6 +162,35 @@ pub struct ReorderItem {
     pub id: String,
     #[serde(rename = "order")]
     pub sort_order: i32,
+}
+
+/// A named, reusable council: an ordered subset of member ids. A member runs
+/// only when it is both enabled (available) and present in the active council.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Council {
+    pub id: String,
+    pub name: String,
+    pub member_ids: Vec<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for `create_council`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCouncilRequest {
+    pub name: String,
+}
+
+/// Input for `update_council` — partial rename and/or membership replacement.
+/// `None` means leave the current value.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCouncilRequest {
+    pub id: String,
+    pub name: Option<String>,
+    pub member_ids: Option<Vec<String>>,
 }
 
 // --- sessions & prompt templates --------------------------------------------
@@ -548,6 +578,135 @@ pub fn delete_prompt_template(state: State<DbState>, request: IdRequest) -> Resu
     Ok(())
 }
 
+/// Create a new, empty named council.
+#[tauri::command]
+pub fn create_council(
+    state: State<DbState>,
+    request: CreateCouncilRequest,
+) -> Result<Council, String> {
+    let name = request.name.trim();
+    if name.is_empty() {
+        return Err("name is required".to_string());
+    }
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let id = Uuid::new_v4().to_string();
+    let now = now_ms();
+
+    conn.execute(
+        "INSERT INTO councils (id, name, member_ids, created_at, updated_at)
+         VALUES (?1, ?2, '[]', ?3, ?3)",
+        params![id, name, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(Council {
+        id,
+        name: name.to_string(),
+        member_ids: Vec::new(),
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+/// Return all councils in creation order.
+#[tauri::command]
+pub fn list_councils(state: State<DbState>) -> Result<Vec<Council>, String> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+    list_councils_inner(&conn)
+}
+
+/// Partially update a council: rename and/or replace its ordered membership.
+#[tauri::command]
+pub fn update_council(
+    state: State<DbState>,
+    request: UpdateCouncilRequest,
+) -> Result<Council, String> {
+    valid_uuid(&request.id)?;
+
+    let new_name = match request.name {
+        None => None,
+        Some(name) => {
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return Err("name is required".to_string());
+            }
+            Some(name)
+        }
+    };
+
+    let new_member_ids = match request.member_ids {
+        None => None,
+        Some(member_ids) => {
+            for id in &member_ids {
+                valid_uuid(id)?;
+            }
+            Some(member_ids)
+        }
+    };
+
+    if new_name.is_none() && new_member_ids.is_none() {
+        return Err("nothing to update".to_string());
+    }
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let mut council = get_council(&conn, &request.id)?;
+
+    if let Some(name) = new_name {
+        council.name = name;
+    }
+    if let Some(member_ids) = new_member_ids {
+        council.member_ids = member_ids;
+    }
+    council.updated_at = now_ms();
+
+    let member_ids_json = serde_json::to_string(&council.member_ids).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE councils SET name = ?1, member_ids = ?2, updated_at = ?3 WHERE id = ?4",
+        params![
+            council.name,
+            member_ids_json,
+            council.updated_at,
+            request.id
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(council)
+}
+
+/// Delete a council by id. Sessions referencing it keep their stored snapshot.
+#[tauri::command]
+pub fn delete_council(state: State<DbState>, request: IdRequest) -> Result<(), String> {
+    valid_uuid(&request.id)?;
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    let changed = conn
+        .execute("DELETE FROM councils WHERE id = ?1", [&request.id])
+        .map_err(|e| e.to_string())?;
+
+    if changed == 0 {
+        return Err("council not found".to_string());
+    }
+    Ok(())
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -605,6 +764,51 @@ fn list_personas(conn: &rusqlite::Connection) -> Result<Vec<Persona>, String> {
         personas.push(row.map_err(|e| e.to_string())?);
     }
     Ok(personas)
+}
+
+fn council_from_row(row: &rusqlite::Row) -> Result<Council, rusqlite::Error> {
+    let member_ids_json: String = row.get("member_ids")?;
+    Ok(Council {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        member_ids: serde_json::from_str(&member_ids_json).unwrap_or_default(),
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+fn get_council(conn: &rusqlite::Connection, id: &str) -> Result<Council, String> {
+    conn.query_row(
+        "SELECT id, name, member_ids, created_at, updated_at
+         FROM councils
+         WHERE id = ?1",
+        [id],
+        council_from_row,
+    )
+    .map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => "council not found".to_string(),
+        e => e.to_string(),
+    })
+}
+
+fn list_councils_inner(conn: &rusqlite::Connection) -> Result<Vec<Council>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, member_ids, created_at, updated_at
+             FROM councils
+             ORDER BY created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let rows = stmt
+        .query_map([], council_from_row)
+        .map_err(|e| e.to_string())?;
+
+    let mut councils = Vec::new();
+    for row in rows {
+        councils.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(councils)
 }
 
 // --- validation ------------------------------------------------------------
@@ -793,8 +997,9 @@ pub fn update_member(
         .lock()
         .map_err(|_| "database lock poisoned".to_string())?;
 
-    let changed = conn.execute(
-        "UPDATE agents
+    let changed = conn
+        .execute(
+            "UPDATE agents
          SET agent_name = COALESCE(?1, agent_name),
              provider = COALESCE(?2, provider),
              model = COALESCE(?3, model),
@@ -807,22 +1012,22 @@ pub fn update_member(
              registered_order = COALESCE(?10, registered_order),
              reasoning = COALESCE(?11, reasoning)
          WHERE id = ?12",
-        params![
-            request.updates.name,
-            request.updates.provider,
-            request.updates.model,
-            request.updates.sys_prompt,
-            request.updates.temp,
-            request.updates.max_tokens,
-            request.updates.enabled,
-            request.updates.streaming,
-            request.updates.color,
-            request.updates.sort_order,
-            request.updates.reasoning_level,
-            request.id,
-        ],
-    )
-    .map_err(|e| e.to_string())?;
+            params![
+                request.updates.name,
+                request.updates.provider,
+                request.updates.model,
+                request.updates.sys_prompt,
+                request.updates.temp,
+                request.updates.max_tokens,
+                request.updates.enabled,
+                request.updates.streaming,
+                request.updates.color,
+                request.updates.sort_order,
+                request.updates.reasoning_level,
+                request.id,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
 
     if changed == 0 {
         return Err("member not found".to_string());
@@ -842,11 +1047,30 @@ pub fn delete_member(state: State<DbState>, request: DeleteMemberRequest) -> Res
         .map_err(|_| "database lock poisoned".to_string())?;
 
     let changed = conn
-        .execute("DELETE FROM agents WHERE id = ?1", [request.id])
+        .execute("DELETE FROM agents WHERE id = ?1", [&request.id])
         .map_err(|e| e.to_string())?;
 
     if changed == 0 {
         return Err("member not found".to_string());
+    }
+
+    // Strip the deleted id from every council's membership so councils never dangle.
+    let affected: Vec<Council> = list_councils_inner(&conn)?
+        .into_iter()
+        .filter(|c| c.member_ids.contains(&request.id))
+        .collect();
+    if !affected.is_empty() {
+        let now = now_ms();
+        let mut stmt = conn
+            .prepare("UPDATE councils SET member_ids = ?1, updated_at = ?2 WHERE id = ?3")
+            .map_err(|e| e.to_string())?;
+        for mut council in affected {
+            council.member_ids.retain(|id| id != &request.id);
+            let member_ids_json =
+                serde_json::to_string(&council.member_ids).map_err(|e| e.to_string())?;
+            stmt.execute(params![member_ids_json, now, council.id])
+                .map_err(|e| e.to_string())?;
+        }
     }
 
     Ok(())
@@ -976,8 +1200,8 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
                 seed.sys_prompt,
                 seed.temp,
                 seed.max_tokens,
-                true,  // enabled
-                true,  // streaming
+                true, // enabled
+                true, // streaming
                 seed.color,
                 seed.sort_order,
                 seed.reasoning_level,
@@ -989,20 +1213,42 @@ pub fn seed_default_members(state: State<DbState>) -> Result<Vec<Persona>, Strin
     list_personas(&conn)
 }
 
-
-/// Run the council: execute all enabled personas in parallel, then synthesize with a judge.
+/// Run a council in parallel, then synthesize with a judge. When `council_id`
+/// is present, the run set is that council's members (in council order) filtered
+/// by availability; otherwise all enabled members run (legacy behavior).
 #[tauri::command]
 pub async fn run_council(
     state: tauri::State<'_, DbState>,
     app_handle: tauri::AppHandle,
     request: RunCouncilRequest,
 ) -> Result<(), String> {
-    let personas = {
+    let enabled: Vec<Persona> = {
         let conn = state.0.lock().map_err(|e| e.to_string())?;
-        list_personas(&conn)?
+
+        match request.council_id.as_deref() {
+            Some(council_id) => {
+                valid_uuid(council_id)?;
+                let council = get_council(&conn, council_id)?;
+                let by_id: std::collections::HashMap<String, Persona> = list_personas(&conn)?
+                    .into_iter()
+                    .map(|p| (p.id.clone(), p))
+                    .collect();
+                // Council order, unknown ids dropped, then availability filter.
+                council
+                    .member_ids
+                    .iter()
+                    .filter_map(|id| by_id.get(id).cloned())
+                    .filter(|p| p.enabled)
+                    .collect()
+            }
+            // Legacy fallback: all enabled members.
+            None => list_personas(&conn)?
+                .into_iter()
+                .filter(|p| p.enabled)
+                .collect(),
+        }
     };
 
-    let enabled: Vec<Persona> = personas.into_iter().filter(|p| p.enabled).collect();
     if enabled.is_empty() {
         return Err("No enabled council members".to_string());
     }
@@ -1017,7 +1263,6 @@ pub async fn run_council(
     )
     .await
 }
-
 
 /// Cancel a running council. MVP: emits a cancelled event; frontend ignores further results.
 #[tauri::command]

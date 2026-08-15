@@ -205,6 +205,7 @@ function MemberRow({
   const setMemberFormOpen = useAppStore((s) => s.setMemberFormOpen);
   const duplicateMember = useAppStore((s) => s.duplicateMember);
   const deleteMember = useAppStore((s) => s.deleteMember);
+  const toggleMemberEnabled = useAppStore((s) => s.toggleMemberEnabled);
 
   const [confirming, setConfirming] = useState(false);
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -253,15 +254,26 @@ function MemberRow({
           <span className="text-sm font-semibold text-foreground truncate">
             {persona.name}
           </span>
-          <Badge
-            variant="outline"
-            className={cn(
-              "text-[10px] px-1.5 py-0",
-              !persona.enabled && "text-muted-foreground"
-            )}
+          <button
+            type="button"
+            onClick={() => toggleMemberEnabled(persona.id)}
+            title={
+              persona.enabled
+                ? "Disable — unavailable for councils"
+                : "Enable — available for councils"
+            }
+            className="shrink-0 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           >
-            {persona.enabled ? "Enabled" : "Disabled"}
-          </Badge>
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[10px] px-1.5 py-0 cursor-pointer hover:bg-accent",
+                !persona.enabled && "text-muted-foreground"
+              )}
+            >
+              {persona.enabled ? "Enabled" : "Disabled"}
+            </Badge>
+          </button>
         </div>
         <div className="flex items-center gap-1.5 mt-0.5">
           <Badge

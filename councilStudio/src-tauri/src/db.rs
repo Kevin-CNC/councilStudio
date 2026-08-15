@@ -71,6 +71,18 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     .ok();
 
     conn.execute(
+        "CREATE TABLE IF NOT EXISTS councils (
+            id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL,
+            member_ids TEXT NOT NULL DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        (),
+    )
+    .map_err(|e| format!("create table: {e}"))?;
+
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS prompt_templates (
             id TEXT PRIMARY KEY NOT NULL,
             name TEXT NOT NULL,

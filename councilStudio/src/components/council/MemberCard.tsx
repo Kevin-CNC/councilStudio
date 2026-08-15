@@ -12,6 +12,7 @@ import {
   Edit,
   Copy,
   Trash2,
+  UserMinus,
   Eye,
   EyeOff,
   Loader2,
@@ -72,12 +73,16 @@ interface MemberCardProps {
   persona: Persona;
   runStatus?: MemberRunStatus;
   dragHandleProps?: any;
+  /** "council" (default) shows a remove-from-council action; "library" shows enable/disable. */
+  variant?: "council" | "library";
 }
 
-export const MemberCard = memo(function MemberCard({ persona, runStatus, dragHandleProps }: MemberCardProps) {
+export const MemberCard = memo(function MemberCard({ persona, runStatus, dragHandleProps, variant = "council" }: MemberCardProps) {
   const setMemberFormOpen = useAppStore((s) => s.setMemberFormOpen);
   const deleteMember = useAppStore((s) => s.deleteMember);
   const duplicateMember = useAppStore((s) => s.duplicateMember);
+  const currentCouncilId = useAppStore((s) => s.currentCouncilId);
+  const removeMemberFromCouncil = useAppStore((s) => s.removeMemberFromCouncil);
   const toggleMemberEnabled = useAppStore((s) => s.toggleMemberEnabled);
   const setSwapTargetId = useAppStore((s) => s.setSwapTargetId);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -162,19 +167,38 @@ export const MemberCard = memo(function MemberCard({ persona, runStatus, dragHan
 
             {/* Actions */}
             <div className="flex flex-col gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
-                onClick={() => toggleMemberEnabled(persona.id)}
-                title={persona.enabled ? "Disable" : "Enable"}
-              >
-                {persona.enabled ? (
-                  <Eye className="h-3 w-3" />
-                ) : (
-                  <EyeOff className="h-3 w-3" />
-                )}
-              </Button>
+              {variant === "library" ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
+                  onClick={() => toggleMemberEnabled(persona.id)}
+                  title={
+                    persona.enabled
+                      ? "Disable — unavailable for councils"
+                      : "Enable — available for councils"
+                  }
+                >
+                  {persona.enabled ? (
+                    <Eye className="h-3 w-3" />
+                  ) : (
+                    <EyeOff className="h-3 w-3" />
+                  )}
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
+                  onClick={() =>
+                    currentCouncilId &&
+                    removeMemberFromCouncil(currentCouncilId, persona.id)
+                  }
+                  title="Remove from council"
+                >
+                  <UserMinus className="h-3 w-3" />
+                </Button>
+              )}
 
               <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
                 <DropdownMenuTrigger asChild>

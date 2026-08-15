@@ -5,6 +5,7 @@ import type {
   PersonaUpdate,
   Provider,
   Session,
+  Council,
   CouncilRun,
   PromptTemplate,
   CompatibilityCheckRequest,
@@ -63,23 +64,62 @@ export async function seedDefaultMembers(): Promise<Persona[]> {
   return invoke<Persona[]>("seed_default_members");
 }
 
+// --- Councils ---------------------------------------------------------------
+
 /**
- * Run the council: all enabled personas execute in parallel in the Rust
- * backend, results stream back as "persona-result" events, and the judge
- * synthesis arrives as a "judge-result" event. Resolves once the run has
- * been dispatched (listen for events for progress/completion).
+ * Create a new, empty named council.
+ */
+export async function createCouncil(name: string): Promise<Council> {
+  return invoke<Council>("create_council", { request: { name } });
+}
+
+/**
+ * List all councils in creation order.
+ */
+export async function listCouncils(): Promise<Council[]> {
+  return invoke<Council[]>("list_councils");
+}
+
+/**
+ * Partially update a council: rename and/or replace its ordered membership.
+ * Only the fields provided will be changed.
+ */
+export async function updateCouncil(
+  id: string,
+  updates: { name?: string; memberIds?: string[] }
+): Promise<Council> {
+  return invoke<Council>("update_council", {
+    request: { id, name: updates.name ?? null, memberIds: updates.memberIds ?? null },
+  });
+}
+
+/**
+ * Permanently delete a council by id. Sessions keep their stored snapshot.
+ */
+export async function deleteCouncil(id: string): Promise<void> {
+  return invoke<void>("delete_council", { request: { id } });
+}
+
+/**
+ * Run the council: the given council's enabled members execute in parallel in
+ * the Rust backend (when `councilId` is omitted, all enabled members run),
+ * results stream back as "persona-result" events, and the judge synthesis
+ * arrives as a "judge-result" event. Resolves once the run has been
+ * dispatched (listen for events for progress/completion).
  */
 export async function runCouncil(
   prompt: string,
   judgeModel: string,
   judgeProvider: Provider,
-  attachments: RunAttachment[] = []
+  attachments: RunAttachment[] = [],
+  councilId: string | null = null
 ): Promise<void> {
   return invoke<void>("run_council", {
     request: {
       prompt,
       judgeModel,
       judgeProvider,
+      councilId,
       attachments: attachments.map((a) => ({
         name: a.name,
         mimeType: a.fileType,
