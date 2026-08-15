@@ -15,7 +15,7 @@ concurrency:
 jobs:
   verify-build-and-compile:
     # self-hosted Linux (UBUNTU) runner in container
-    runs-on: [self-hosted, linux, tauri]
+    runs-on: [self-hosted, linux, mainMerger]
 
     steps:
       - name: Checkout repository
