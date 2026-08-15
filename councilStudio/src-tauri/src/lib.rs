@@ -2,15 +2,16 @@ mod cmds;
 mod compatibility;
 mod db;
 mod models;
-mod secrets;
-mod providers;
 mod orchestrator;
+mod providers;
+mod secrets;
 
 use cmds::{
-    cancel_run, check_model_compatibility, create_member, delete_member, delete_prompt_template,
-    delete_session, get_api_keys, get_session, list_members, list_prompt_templates,
-    list_sessions, pin_session, reorder_members, run_council, save_api_key,
-    save_prompt_template, save_session, seed_default_members, update_member,
+    cancel_run, check_model_compatibility, create_council, create_member, delete_council,
+    delete_member, delete_prompt_template, delete_session, get_api_keys, get_session,
+    list_councils, list_members, list_prompt_templates, list_sessions, pin_session,
+    reorder_members, run_council, save_api_key, save_prompt_template, save_session,
+    seed_default_members, update_council, update_member,
 };
 use std::sync::Mutex;
 use tauri::Manager;
@@ -48,6 +49,10 @@ pub fn run() {
             get_session,
             delete_session,
             pin_session,
+            create_council,
+            list_councils,
+            update_council,
+            delete_council,
             save_prompt_template,
             list_prompt_templates,
             delete_prompt_template,
