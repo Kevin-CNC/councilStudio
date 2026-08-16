@@ -168,6 +168,35 @@ export interface Session {
   tags: string[];
   /** Full run detail. Omitted from list views — fetched lazily on selection. */
   run?: CouncilRun;
+  utilityData?: SessionUtilityData;
+}
+
+// Per-member cost/throughput snapshot (derived, not user-edited)
+export interface MemberUtilityCost {
+  memberId: string;
+  member: string;
+  tokenThroughputPerMin: number;
+  inputCostPerToken: number;
+  outputCostPerToken: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface SessionCosts {
+  ovrlAverageInputCost: number;
+  ovrlAverageOutputCost: number;
+  ovrlOutputTokens: number;
+  ovrlTokenThroughputPerMin: number;
+  members: MemberUtilityCost[];
+}
+
+export interface SessionUtilityData {
+  judge_model: string;
+  judge_provider: string;
+  max_tokens: number;
+  concurrency: number;
+  customVars: Record<string, string>;
+  costs: SessionCosts;
 }
 
 export interface PromptTemplate {

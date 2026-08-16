@@ -18,6 +18,7 @@ import type {
 } from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
 import { toast } from "@/components/ui/toaster";
+import { computeSessionCosts } from "@/lib/metrics";
 import {
   DEFAULT_SHORTCUTS,
   loadShortcuts,
@@ -36,6 +37,9 @@ const LS_KEYS = {
   judgeModel: "judge-model",
   judgeProvider: "judge-provider",
   currentCouncilId: "current-council-id",
+  concurrency: "session-concurrency",
+  sessionMaxTokens: "session-max-tokens",
+  customVars: "session-custom-vars",
 } as const;
 
 function lsGet(key: string): string | null {
@@ -74,6 +78,22 @@ function storedJudgeProvider(): Provider {
     : "anthropic";
 }
 
+function storedNumber(key: string, fallback: number): number {
+  const n = Number(lsGet(key));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function storedRecord(key: string): Record<string, string> {
+  try {
+    const raw = lsGet(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
 type ViewId = "home" | "prompts" | "sessions" | "members";
 
@@ -107,6 +127,12 @@ interface AppState {
   cancelledRunId: string | null;
   judgeModel: string;
   judgeProvider: Provider;
+  /** Session-level parallelism draft. Not yet enforced by the orchestrator (v1: display-only). */
+  concurrency: number;
+  /** Session-level token cap draft. Not yet enforced by the orchestrator (v1: display-only). */
+  sessionMaxTokens: number;
+  /** User-defined key-value session variables. */
+  customVars: Record<string, string>;
   /** Live per-member progress, keyed by member id. */
   personaStatuses: Record<string, MemberRunStatus>;
   /** Judge lifecycle: idle until the backend says it's synthesizing. */
@@ -179,6 +205,10 @@ interface AppState {
   runCouncil: () => void;
   cancelRun: () => void;
   setJudge: (model: string, provider: Provider) => void;
+  setConcurrency: (value: number) => void;
+  setSessionMaxTokens: (value: number) => void;
+  setCustomVar: (key: string, value: string) => void;
+  removeCustomVar: (key: string) => void;
 
   // Actions - Sessions
   loadSessions: () => Promise<void>;
@@ -235,6 +265,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   cancelledRunId: null,
   judgeModel: lsGet(LS_KEYS.judgeModel) ?? "",
   judgeProvider: storedJudgeProvider(),
+  concurrency: storedNumber(LS_KEYS.concurrency, 4),
+  sessionMaxTokens: storedNumber(LS_KEYS.sessionMaxTokens, 4096),
+  customVars: storedRecord(LS_KEYS.customVars),
   personaStatuses: {},
   judgeStatus: "idle",
 
@@ -742,6 +775,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     lsSet(LS_KEYS.judgeProvider, provider);
   },
 
+  setConcurrency: (value) => {
+    set({ concurrency: value });
+    lsSet(LS_KEYS.concurrency, String(value));
+  },
+
+  setSessionMaxTokens: (value) => {
+    set({ sessionMaxTokens: value });
+    lsSet(LS_KEYS.sessionMaxTokens, String(value));
+  },
+
+  setCustomVar: (key, value) => {
+    const customVars = { ...get().customVars, [key]: value };
+    set({ customVars });
+    lsSet(LS_KEYS.customVars, JSON.stringify(customVars));
+  },
+
+  removeCustomVar: (key) => {
+    const customVars = { ...get().customVars };
+    delete customVars[key];
+    set({ customVars });
+    lsSet(LS_KEYS.customVars, JSON.stringify(customVars));
+  },
+
   // --- Session actions ---
 
   loadSessions: async () => {
@@ -1137,6 +1193,14 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
         pinned: false,
         tags: [],
         run: completedRun,
+        utilityData: {
+          judge_model: state.judgeModel,
+          judge_provider: state.judgeProvider,
+          max_tokens: state.sessionMaxTokens,
+          concurrency: state.concurrency,
+          customVars: state.customVars,
+          costs: computeSessionCosts(completedRun),
+        },
       };
       bridge.saveSession(session).catch((e) => {
         useAppStore.setState({ error: String(e) });
@@ -1180,6 +1244,14 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
         pinned: false,
         tags: [],
         run: terminatedRun,
+        utilityData: {
+          judge_model: state.judgeModel,
+          judge_provider: state.judgeProvider,
+          max_tokens: state.sessionMaxTokens,
+          concurrency: state.concurrency,
+          customVars: state.customVars,
+          costs: computeSessionCosts(terminatedRun),
+        },
       };
       bridge.saveSession(session).catch((e) => {
         useAppStore.setState({ error: String(e) });
