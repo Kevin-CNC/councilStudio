@@ -11,6 +11,7 @@ import type {
   CompatibilityCheckRequest,
   CompatibilityCheckResult,
   RunAttachment,
+  SessionUtilityData,
 } from "@/types";
 
 /**
@@ -187,6 +188,7 @@ interface SessionSummaryDto {
 interface SessionRowDto extends SessionSummaryDto {
   runJson: string;
   rawResponsesJson: string;
+  utilityJson: string;
 }
 
 function sessionFromRow(row: SessionRowDto): Session {
@@ -213,6 +215,15 @@ function sessionFromRow(row: SessionRowDto): Session {
     run.judgeResult.rawResponse = rawMap.judge;
   }
 
+  let utilityData: SessionUtilityData | undefined;
+  if (row.utilityJson?.trim()) {
+    try {
+      utilityData = JSON.parse(row.utilityJson) as SessionUtilityData;
+    } catch {
+      utilityData = undefined;
+    }
+  }
+
   return {
     id: row.id,
     title: row.title,
@@ -229,6 +240,7 @@ function sessionFromRow(row: SessionRowDto): Session {
     pinned: row.pinned,
     tags: row.tags,
     run,
+    utilityData,
   };
 }
 
@@ -262,6 +274,7 @@ export async function saveSession(session: Session): Promise<void> {
       updatedAt: session.updatedAt,
       runJson: JSON.stringify(session.run),
       rawResponsesJson: JSON.stringify(rawMap),
+      utilityJson: session.utilityData ? JSON.stringify(session.utilityData) : "",
     },
   });
 }
