@@ -56,7 +56,8 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
             pinned INTEGER NOT NULL DEFAULT 0,
             tags TEXT NOT NULL DEFAULT '[]',
             run_json TEXT NOT NULL,
-            raw_responses_json TEXT NOT NULL DEFAULT ''
+            raw_responses_json TEXT NOT NULL DEFAULT '',
+            utility_json TEXT NOT NULL DEFAULT ''
         )",
         (),
     )
@@ -66,6 +67,12 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     // installs. The duplicate-column error is expected and discarded.
     conn.execute(
         "ALTER TABLE sessions ADD COLUMN raw_responses_json TEXT NOT NULL DEFAULT ''",
+        (),
+    )
+    .ok();
+
+    conn.execute(
+        "ALTER TABLE sessions ADD COLUMN utility_json TEXT NOT NULL DEFAULT ''",
         (),
     )
     .ok();
