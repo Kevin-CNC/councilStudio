@@ -98,6 +98,17 @@
   --color-ring: hsl(207 68% 55%);
 }
 
+/* Hide native number-input spin steppers */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* Performance: CSS containment utilities */
 .contain-paint {
   contain: layout paint;
