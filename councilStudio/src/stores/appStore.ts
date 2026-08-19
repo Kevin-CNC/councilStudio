@@ -19,6 +19,7 @@ import type {
 import * as bridge from "@/lib/tauri-bridge";
 import { toast } from "@/components/ui/toaster";
 import { computeSessionCosts } from "@/lib/metrics";
+import { resolvePromptVars } from "@/lib/prompt-vars";
 import {
   DEFAULT_SHORTCUTS,
   loadShortcuts,
@@ -686,7 +687,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // --- Run actions ---
 
   runCouncil: () => {
-    const { currentPrompt, members, judgeModel, judgeProvider, attachments } = get();
+    const { currentPrompt, members, judgeModel, judgeProvider, attachments, customVars } = get();
     const council = selectCurrentCouncil(get());
     // Two-layer model: a member runs only when enabled AND in the active
     // council. With no council resolved, fall back to all enabled members.
@@ -731,10 +732,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       attachments: [],
     });
 
+    // @vars are resolved here, right before the backend call, so the
+    // provider/backend only ever sees resolved text — activeRun.prompt above
+    // keeps the raw @var text for session history/replay.
+    const resolvedPrompt = resolvePromptVars(currentPrompt, customVars);
+
     // Backend dispatches personas in parallel and streams results back as
     // Tauri events (see listeners at the bottom of this file).
     bridge
-      .runCouncil(currentPrompt, judgeModel, judgeProvider, runAttachments, council?.id ?? null)
+      .runCouncil(resolvedPrompt, judgeModel, judgeProvider, runAttachments, council?.id ?? null)
       .catch((err) => {
         set((state) => ({
           isRunning: false,
@@ -1066,6 +1072,7 @@ export function selectCurrentCouncilMembers(s: AppState): Persona[] {
 export const selectSessions = (s: AppState) => s.sessions;
 export const selectPromptTemplates = (s: AppState) => s.promptTemplates;
 export const selectCurrentPrompt = (s: AppState) => s.currentPrompt;
+export const selectCustomVars = (s: AppState) => s.customVars;
 export const selectAttachments = (s: AppState) => s.attachments;
 export const selectIsRunning = (s: AppState) => s.isRunning;
 export const selectActiveRun = (s: AppState) => s.activeRun;
