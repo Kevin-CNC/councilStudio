@@ -129,6 +129,8 @@ pub async fn run_council(
                     tokens_out: 0,
                     latency_ms: 0,
                     cost: 0.0,
+                    input_cost: 0.0,
+                    output_cost: 0.0,
                     started_at,
                     completed_at: None,
                     raw_response: None,
@@ -190,6 +192,7 @@ pub async fn run_council(
             tokens_in: 0,
             tokens_out: 0,
             latency_ms: 0,
+            cost: 0.0,
             raw_response: None,
         },
     };
