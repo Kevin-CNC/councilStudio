@@ -121,7 +121,7 @@ pub struct CompatibilityCheckResult {
     pub failed_requests_count: usize,
 }
 
-fn normalize_model_id(provider: &str, model: &str) -> Option<String> {
+pub(crate) fn normalize_model_id(provider: &str, model: &str) -> Option<String> {
     match provider {
         "anthropic" | "openai" => Some(format!("{provider}/{model}")),
         "openrouter" => Some(model.to_string()),
