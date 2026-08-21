@@ -7,10 +7,10 @@ function throughputPerMin(tokens: number, latencyMs: number): number {
 
 export function computeSessionCosts(run: CouncilRun | undefined): SessionCosts {
   const empty: SessionCosts = {
-    ovrlAverageInputCost: 0,
-    ovrlAverageOutputCost: 0,
+    ovrlAverageCostPerToken: 0,
     ovrlOutputTokens: 0,
     ovrlTokenThroughputPerMin: 0,
+    ovrlTotalCost: 0,
     members: [],
   };
   if (!run) return empty;
@@ -19,21 +19,29 @@ export function computeSessionCosts(run: CouncilRun | undefined): SessionCosts {
     memberId: p.personaId.slice(0, 16),
     member: p.personaName,
     tokenThroughputPerMin: throughputPerMin(p.tokensIn + p.tokensOut, p.latencyMs),
-    inputCostPerToken: 0,
-    outputCostPerToken: 0,
+    cost: p.cost,
+    inputCost: p.inputCost,
+    outputCost: p.outputCost,
     inputTokens: p.tokensIn,
     outputTokens: p.tokensOut,
   }));
 
   const ovrlOutputTokens = members.reduce((sum, m) => sum + m.outputTokens, 0);
-  const totalTokens = members.reduce((sum, m) => sum + m.inputTokens + m.outputTokens, 0);
+  const judgeTokens = run.judgeResult
+    ? run.judgeResult.tokensIn + run.judgeResult.tokensOut
+    : 0;
+  const totalTokens =
+    members.reduce((sum, m) => sum + m.inputTokens + m.outputTokens, 0) + judgeTokens;
   const durationMs = run.completedAt ? run.completedAt - run.startedAt : 0;
+  const totalCost =
+    members.reduce((sum, m) => sum + m.cost, 0) + (run.judgeResult?.cost ?? 0);
+  const ovrlAverageCostPerToken = totalTokens > 0 ? totalCost / totalTokens : 0;
 
   return {
-    ovrlAverageInputCost: 0,
-    ovrlAverageOutputCost: 0,
+    ovrlAverageCostPerToken,
     ovrlOutputTokens,
     ovrlTokenThroughputPerMin: throughputPerMin(totalTokens, durationMs),
+    ovrlTotalCost: totalCost,
     members,
   };
 }
@@ -51,8 +59,12 @@ export function computeMetrics(run: CouncilRun | undefined): RunMetrics {
   if (!run || run.personaResults.length === 0) return empty;
 
   const results = run.personaResults;
-  const totalTokens = results.reduce((sum, p) => sum + p.tokensIn + p.tokensOut, 0);
-  const totalCost = results.reduce((sum, p) => sum + p.cost, 0) + (run.judgeResult ? 0 : 0);
+  const judgeTokens = run.judgeResult
+    ? run.judgeResult.tokensIn + run.judgeResult.tokensOut
+    : 0;
+  const totalTokens =
+    results.reduce((sum, p) => sum + p.tokensIn + p.tokensOut, 0) + judgeTokens;
+  const totalCost = results.reduce((sum, p) => sum + p.cost, 0) + (run.judgeResult?.cost ?? 0);
   const avgLatencyMs = results.reduce((sum, p) => sum + p.latencyMs, 0) / results.length;
   const durationMs = run.completedAt ? run.completedAt - run.startedAt : 0;
 
