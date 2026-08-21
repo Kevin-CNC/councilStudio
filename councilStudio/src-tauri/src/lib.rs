@@ -3,6 +3,7 @@ mod compatibility;
 mod db;
 mod models;
 mod orchestrator;
+mod pricing;
 mod providers;
 mod secrets;
 
