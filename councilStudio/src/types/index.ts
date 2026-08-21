@@ -90,6 +90,8 @@ export interface PersonaResult {
   tokensOut: number;
   latencyMs: number;
   cost: number;
+  inputCost: number;
+  outputCost: number;
   citations?: Citation[];
   startedAt: number;
   completedAt?: number;
@@ -106,6 +108,7 @@ export interface JudgeResult {
   tokensIn: number;
   tokensOut: number;
   latencyMs: number;
+  cost: number;
   rawResponse?: string;
 }
 
@@ -176,17 +179,18 @@ export interface MemberUtilityCost {
   memberId: string;
   member: string;
   tokenThroughputPerMin: number;
-  inputCostPerToken: number;
-  outputCostPerToken: number;
+  cost: number;
+  inputCost: number;
+  outputCost: number;
   inputTokens: number;
   outputTokens: number;
 }
 
 export interface SessionCosts {
-  ovrlAverageInputCost: number;
-  ovrlAverageOutputCost: number;
+  ovrlAverageCostPerToken: number;
   ovrlOutputTokens: number;
   ovrlTokenThroughputPerMin: number;
+  ovrlTotalCost: number;
   members: MemberUtilityCost[];
 }
 
