@@ -7,6 +7,7 @@
 //!   parses the structured JSON verdict.
 
 use crate::cmds::{JudgeResult, PersonaResult, RunAttachment};
+use crate::pricing;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -107,6 +108,10 @@ struct AnthropicContent {
 struct AnthropicUsage {
     input_tokens: u64,
     output_tokens: u64,
+    #[serde(default)]
+    cache_read_input_tokens: u64,
+    #[serde(default)]
+    cache_creation_input_tokens: u64,
 }
 
 #[derive(Deserialize)]
@@ -125,10 +130,34 @@ struct MessageContent {
     content: String,
 }
 
+/// Deserialize an optional f64 from either a JSON number or numeric string.
+fn f64_opt<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumberOrString {
+        F(f64),
+        S(String),
+    }
+    Ok(match Option::<NumberOrString>::deserialize(deserializer)? {
+        None => None,
+        Some(NumberOrString::F(f)) => Some(f),
+        Some(NumberOrString::S(s)) => s.parse::<f64>().ok(),
+    })
+}
+
 #[derive(Deserialize)]
 struct OpenAiUsage {
     prompt_tokens: u64,
     completion_tokens: u64,
+    #[allow(dead_code)]
+    #[serde(default)]
+    total_tokens: u64,
+    /// OpenRouter reports `usage.cost`; OpenAI omits it.
+    #[serde(default, deserialize_with = "f64_opt")]
+    cost: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -174,7 +203,7 @@ pub async fn chat_completion(
 ) -> Result<PersonaResult, String> {
     let started_at = now_millis();
 
-    let (content, tokens_in, tokens_out, raw_response) = match req.provider {
+    let (content, usage, raw_response) = match req.provider {
         "anthropic" => {
             let key = req
                 .api_key
@@ -217,6 +246,7 @@ pub async fn chat_completion(
     };
 
     let completed_at = now_millis();
+    let cost = pricing::resolve_cost(client, req.provider, req.model, &usage).await;
 
     Ok(PersonaResult {
         persona_id: String::new(),   // filled by orchestrator
@@ -226,10 +256,12 @@ pub async fn chat_completion(
         status: "completed".to_string(),
         content,
         error: None,
-        tokens_in,
-        tokens_out,
+        tokens_in: usage.prompt_tokens,
+        tokens_out: usage.completion_tokens,
         latency_ms: completed_at - started_at,
-        cost: cost_calc(req.provider, req.model, tokens_in, tokens_out),
+        cost: cost.total,
+        input_cost: cost.input_cost,
+        output_cost: cost.output_cost,
         started_at,
         completed_at: Some(completed_at),
         raw_response: Some(raw_response),
@@ -303,6 +335,7 @@ pub async fn judge_call(
             tokens_in: result.tokens_in,
             tokens_out: result.tokens_out,
             latency_ms,
+            cost: result.cost,
             raw_response: result.raw_response.clone(),
         }),
         Err(_) => {
@@ -318,6 +351,7 @@ pub async fn judge_call(
                 tokens_in: result.tokens_in,
                 tokens_out: result.tokens_out,
                 latency_ms,
+                cost: result.cost,
                 raw_response: result.raw_response.clone(),
             })
         }
@@ -332,7 +366,7 @@ async fn call_anthropic_wire(
     client: &reqwest::Client,
     api_key: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, u64, u64, String), String> {
+) -> Result<(String, pricing::Usage, String), String> {
     let user_message = if req.attachments.is_empty() {
         Message::text("user", req.user_prompt)
     } else {
@@ -391,8 +425,13 @@ async fn call_anthropic_wire(
         .unwrap_or_default();
     Ok((
         content,
-        data.usage.input_tokens,
-        data.usage.output_tokens,
+        pricing::Usage {
+            prompt_tokens: data.usage.input_tokens,
+            completion_tokens: data.usage.output_tokens,
+            cache_read_tokens: data.usage.cache_read_input_tokens,
+            cache_write_tokens: data.usage.cache_creation_input_tokens,
+            reported_cost: None,
+        },
         raw.trim().to_string(),
     ))
 }
@@ -402,7 +441,7 @@ async fn call_openai_wire(
     api_key: &str,
     url: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, u64, u64, String), String> {
+) -> Result<(String, pricing::Usage, String), String> {
     let user_message = if req.attachments.is_empty() {
         Message::text("user", req.user_prompt)
     } else {
@@ -457,8 +496,13 @@ async fn call_openai_wire(
         .unwrap_or_default();
     Ok((
         content,
-        data.usage.prompt_tokens,
-        data.usage.completion_tokens,
+        pricing::Usage {
+            prompt_tokens: data.usage.prompt_tokens,
+            completion_tokens: data.usage.completion_tokens,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reported_cost: data.usage.cost,
+        },
         raw.trim().to_string(),
     ))
 }
@@ -467,7 +511,7 @@ async fn call_ollama_wire(
     client: &reqwest::Client,
     base_url: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, u64, u64, String), String> {
+) -> Result<(String, pricing::Usage, String), String> {
     let user_message = if req.attachments.is_empty() {
         Message::text("user", req.user_prompt)
     } else {
@@ -515,8 +559,13 @@ async fn call_ollama_wire(
         serde_json::from_str(&raw).map_err(|e| format!("Ollama parse: {e}"))?;
     Ok((
         data.message.content,
-        data.prompt_eval_count.unwrap_or(0),
-        data.eval_count.unwrap_or(0),
+        pricing::Usage {
+            prompt_tokens: data.prompt_eval_count.unwrap_or(0),
+            completion_tokens: data.eval_count.unwrap_or(0),
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            reported_cost: None,
+        },
         raw.trim().to_string(),
     ))
 }
@@ -540,9 +589,4 @@ fn strip_code_fences(s: &str) -> &str {
         .unwrap_or(trimmed);
     let without_close = without_open.strip_suffix("```").unwrap_or(without_open);
     without_close.trim()
-}
-
-/// Cost per call in USD. MVP: pricing table not wired up yet — always 0.0.
-fn cost_calc(_provider: &str, _model: &str, _tokens_in: u64, _tokens_out: u64) -> f64 {
-    0.0
 }
