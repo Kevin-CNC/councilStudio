@@ -4,9 +4,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
-import { PanelRightClose, PanelRight, Variable, DollarSign, Activity } from "lucide-react";
+import { PanelRightClose, PanelRight, Variable, Activity } from "lucide-react";
 import { VarsTab } from "./VarsTab";
-import { CostsTab } from "./CostsTab";
 import { MetricsTab } from "./MetricsTab";
 
 export function RightPanel() {
@@ -32,12 +31,13 @@ export function RightPanel() {
       <AnimatePresence initial={false}>
         {rightPanelOpen && (
           <motion.aside
-            initial={{ x: 24, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 24, opacity: 0 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="flex h-full w-64 shrink-0 flex-col border-l border-border bg-card sm:w-72"
+            initial={{ x: "100%", width: 0 }}
+            animate={{ x: 0, width: "18rem" }}
+            exit={{ x: "100%", width: 0 }}
+            transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+            className="flex h-full shrink-0 flex-col overflow-hidden border-l border-border bg-card"
           >
+            <div className="flex h-full w-full flex-col">
             {/* Header */}
             <div className="flex h-12 items-center justify-between border-b border-border px-3">
               <span className="text-sm font-semibold text-foreground">Utilities</span>
@@ -52,14 +52,11 @@ export function RightPanel() {
             </div>
 
             {/* Tabs */}
-            <Tabs defaultValue="vars" className="flex-1 flex flex-col">
+            <Tabs defaultValue="vars" className="flex-1 min-h-0 flex flex-col">
               <div className="border-b border-border px-2 py-2">
                 <TabsList className="h-auto w-full flex-wrap gap-1 bg-transparent p-0">
                   <TabsTrigger value="vars" className="gap-1.5 text-xs px-2 py-1">
                     <Variable className="h-3 w-3" /> Vars
-                  </TabsTrigger>
-                  <TabsTrigger value="costs" className="gap-1.5 text-xs px-2 py-1">
-                    <DollarSign className="h-3 w-3" /> Costs
                   </TabsTrigger>
                   <TabsTrigger value="metrics" className="gap-1.5 text-xs px-2 py-1">
                     <Activity className="h-3 w-3" /> Metrics
@@ -67,8 +64,8 @@ export function RightPanel() {
                 </TabsList>
               </div>
 
-              <ScrollArea className="flex-1">
-                  {([["vars", <VarsTab />], ["costs", <CostsTab />], ["metrics", <MetricsTab />]] as const).map(
+              <ScrollArea className="flex-1 min-h-0">
+                  {([["vars", <VarsTab />], ["metrics", <MetricsTab />]] as const).map(
                     ([value, tab]) => (
                       <TabsContent key={value} value={value} className="m-0 px-3 py-2">
                         <motion.div
@@ -83,6 +80,7 @@ export function RightPanel() {
                   )}
               </ScrollArea>
             </Tabs>
+            </div>
           </motion.aside>
         )}
       </AnimatePresence>
