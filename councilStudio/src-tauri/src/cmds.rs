@@ -85,6 +85,10 @@ pub struct PersonaResult {
     pub tokens_out: u64,
     pub latency_ms: u64,
     pub cost: f64,
+    #[serde(default)]
+    pub input_cost: f64,
+    #[serde(default)]
+    pub output_cost: f64,
     pub started_at: u64,
     pub completed_at: Option<u64>,
     pub raw_response: Option<String>,
@@ -104,6 +108,8 @@ pub struct JudgeResult {
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub latency_ms: u64,
+    #[serde(default)]
+    pub cost: f64,
     pub raw_response: Option<String>,
 }
 
