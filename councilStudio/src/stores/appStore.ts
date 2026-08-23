@@ -1189,11 +1189,14 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
           state.councils.find((c) => c.id === completedRun.configId)?.name ?? "Default",
         status: "completed",
         personaCount: resultsArray.length,
-        tokensUsed: resultsArray.reduce(
-          (s, r) => s + r.tokensIn + r.tokensOut,
-          0
-        ),
-        totalCost: resultsArray.reduce((s, r) => s + r.cost, 0),
+        tokensUsed:
+          resultsArray.reduce((s, r) => s + r.tokensIn + r.tokensOut, 0) +
+          (state.activeRun.judgeResult
+            ? state.activeRun.judgeResult.tokensIn + state.activeRun.judgeResult.tokensOut
+            : 0),
+        totalCost:
+          resultsArray.reduce((s, r) => s + r.cost, 0) +
+          (state.activeRun.judgeResult?.cost ?? 0),
         durationMs: completedRun.completedAt! - completedRun.startedAt,
         createdAt: completedRun.startedAt,
         updatedAt: completedRun.completedAt!,
@@ -1240,11 +1243,14 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
           state.councils.find((c) => c.id === terminatedRun.configId)?.name ?? "Default",
         status: "terminated",
         personaCount: resultsArray.length,
-        tokensUsed: resultsArray.reduce(
-          (s, r) => s + r.tokensIn + r.tokensOut,
-          0
-        ),
-        totalCost: resultsArray.reduce((s, r) => s + r.cost, 0),
+        tokensUsed:
+          resultsArray.reduce((s, r) => s + r.tokensIn + r.tokensOut, 0) +
+          (state.activeRun.judgeResult
+            ? state.activeRun.judgeResult.tokensIn + state.activeRun.judgeResult.tokensOut
+            : 0),
+        totalCost:
+          resultsArray.reduce((s, r) => s + r.cost, 0) +
+          (state.activeRun.judgeResult?.cost ?? 0),
         durationMs: terminatedRun.completedAt! - terminatedRun.startedAt,
         createdAt: terminatedRun.startedAt,
         updatedAt: terminatedRun.completedAt!,
