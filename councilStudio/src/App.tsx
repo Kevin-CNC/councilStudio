@@ -3,6 +3,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Dashboard } from "@/pages/Dashboard";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { KeyboardProvider } from "@/components/layout/KeyboardProvider";
+import { LoaderScreen } from "@/components/layout/LoaderScreen";
 import { Toaster } from "@/components/ui/toaster";
 import { useAppStore, initStoreListeners, resetListenerGuard } from "@/stores/appStore";
 import { seedDefaultMembers } from "@/lib/tauri-bridge";
@@ -12,22 +13,28 @@ function App() {
   const loadCouncils = useAppStore((s) => s.loadCouncils);
   const loadSessions = useAppStore((s) => s.loadSessions);
   const loadPromptTemplates = useAppStore((s) => s.loadPromptTemplates);
+  const isBootstrapped = useAppStore((s) => s.isBootstrapped);
 
   useEffect(() => {
     // Hydrate persisted UI settings (theme, font size, contrast, motion) onto the DOM
     useAppStore.getState().applyUiSettingsToDOM();
     async function init() {
-      await loadMembers();
-      const { members } = useAppStore.getState();
-      if (members.length === 0) {
-        try {
-          const seeded = await seedDefaultMembers();
-          useAppStore.setState({ members: seeded });
-        } catch {
-          // DB already seeded or error — handled by store
+      try {
+        await loadMembers();
+        const { members } = useAppStore.getState();
+        if (members.length === 0) {
+          try {
+            const seeded = await seedDefaultMembers();
+            useAppStore.setState({ members: seeded });
+          } catch {
+            // DB already seeded or error — handled by store
+          }
         }
+        await Promise.all([loadCouncils(), loadSessions(), loadPromptTemplates()]);
+      } finally {
+        // Always clear the boot loader, even if a startup load throws.
+        useAppStore.setState({ isBootstrapped: true });
       }
-      await Promise.all([loadCouncils(), loadSessions(), loadPromptTemplates()]);
     }
     init();
   }, [loadMembers, loadCouncils, loadSessions, loadPromptTemplates]);
@@ -56,9 +63,13 @@ function App() {
   return (
     <TooltipProvider>
       <KeyboardProvider>
-        <AppShell>
-          <Dashboard />
-        </AppShell>
+        {isBootstrapped ? (
+          <AppShell>
+            <Dashboard />
+          </AppShell>
+        ) : (
+          <LoaderScreen />
+        )}
         <Toaster />
       </KeyboardProvider>
     </TooltipProvider>

@@ -9,9 +9,70 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: #ffffff;
+        color: #0a0a0a;
+        font-family: "Inter", system-ui, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        #boot-splash {
+          background: #0a0a0a;
+          color: #fafafa;
+        }
+      }
+      #boot-splash img {
+        width: 64px;
+        height: 64px;
+      }
+      #boot-splash .boot-logo-dark {
+        display: none;
+      }
+      @media (prefers-color-scheme: dark) {
+        #boot-splash .boot-logo-light {
+          display: none;
+        }
+        #boot-splash .boot-logo-dark {
+          display: block;
+        }
+      }
+      #boot-splash .boot-name {
+        font-size: 18px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+      }
+      #boot-splash .boot-spinner {
+        width: 24px;
+        height: 24px;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        border-radius: 50%;
+        opacity: 0.7;
+        animation: boot-spin 0.8s linear infinite;
+      }
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-splash">
+        <img class="boot-logo-light" src="/councilStudio_logo.svg" alt="Council Studio" />
+        <img class="boot-logo-dark" src="/councilStudio_logo_dark.svg" alt="Council Studio" />
+        <div class="boot-name">Council Studio</div>
+        <div class="boot-spinner"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

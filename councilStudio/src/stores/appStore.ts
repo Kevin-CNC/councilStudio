@@ -143,6 +143,8 @@ interface AppState {
   isLoading: boolean;
   /** False until the first loadSessions() settles — drives the sessions-page spinner. */
   sessionsLoaded: boolean;
+  /** False until App init() finishes all startup loads — gates the boot LoaderScreen. */
+  isBootstrapped: boolean;
   error: string | null;
 
   // UI — flattened for fine-grained subscriptions
@@ -275,6 +277,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Loading / error
   isLoading: false,
   sessionsLoaded: false,
+  isBootstrapped: false,
   error: null,
 
   // Initial UI state — flat keys for fine-grained subscriptions
@@ -293,7 +296,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTab: "overview",
   selectedSessionId: null,
   responsePanelHeight: 380,
-  responsePanelCollapsed: false,
+  responsePanelCollapsed: true,
   currentView: "home",
   shortcuts: loadShortcuts(),
   importPreviewOpen: false,
