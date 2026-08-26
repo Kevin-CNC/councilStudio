@@ -10,7 +10,7 @@ use tauri::{Emitter, Manager};
 
 fn build_judge_prompt(prompt: &str, results: &[PersonaResult]) -> String {
     let mut p = format!(
-        "You are a council judge. Synthesize the following responses from {} AI personas to the question below.\n\nReturn ONLY valid JSON (no markdown, no code fences) with exactly these fields:\n- summary: string — overall synthesis\n- consensus: string[] — points most personas agree on\n- disagreements: string[] — points where personas conflict\n- minority_views: string[] — claims made by only one persona\n- recommendations: string[] — actionable next steps\n- confidence_score: number 0-100 — how confident the synthesis is\n- synthesis: string — detailed narrative synthesis\n\n## QUESTION\n{}\n\n## PERSONA RESPONSES\n\n",
+        "You are a council judge. Synthesize the following responses from {} AI personas to the question below.\n\nReturn ONLY valid JSON (no markdown, no code fences) with exactly these fields:\n- summary: string — overall synthesis\n- consensus: string[] — points most personas agree on\n- disagreements: string[] — points where personas conflict\n- minority_views: string[] — claims made by only one persona\n- recommendations: string[] — actionable next steps\n- confidence_score: number 0-100 — how confident the synthesis is\n- synthesis: string — detailed narrative synthesis\n- diagrams: array of {{\"id\": string, \"code\": string, \"caption\": string}} — `code` is raw mermaid source (no fences). Include only if a diagram genuinely helps; else [].\n- citations: array of {{\"id\": string, \"source\": string, \"url\": string, \"excerpt\": string}} — external sources you reference in summary/synthesis via [{{n}}] markers; else [].\n- missing_personas: string[] — names of personas that failed or gave no usable response.\n\n`summary` and `synthesis` are markdown and may contain ```mermaid fences and [{{n}}] citation markers. Never emit raw HTML.\n\n## QUESTION\n{}\n\n## PERSONA RESPONSES\n\n",
         results.len(),
         prompt
     );
@@ -93,6 +93,14 @@ pub async fn run_council(
                 )
                 .ok();
 
+            // Harness contract: append to the persona's system prompt so every
+            // provider gets the same diagram/citation/cross-ref instructions.
+            let sys_prompt = format!(
+                "{}{}",
+                persona.sys_prompt,
+                crate::harness::HARNESS_INSTRUCTIONS
+            );
+
             // One call, any provider. A missing key comes back as Err and
             // becomes a failed PersonaResult below.
             let result = crate::providers::chat_completion(
@@ -102,7 +110,7 @@ pub async fn run_council(
                     api_key: api_key.as_deref(),
                     base_url: base_url.as_deref(),
                     model: &persona.model,
-                    system_prompt: &persona.sys_prompt,
+                    system_prompt: &sys_prompt,
                     user_prompt: &prompt,
                     temperature: persona.temp,
                     max_tokens: persona.max_tokens,
@@ -115,6 +123,10 @@ pub async fn run_council(
                 Ok(mut r) => {
                     r.persona_id = persona.id.clone();
                     r.persona_name = persona.name.clone();
+                    // Citations are parsed before persona_id is known — fill it in.
+                    for c in r.citations.iter_mut() {
+                        c.persona_id = persona.id.clone();
+                    }
                     r
                 }
                 Err(e) => PersonaResult {
@@ -134,6 +146,7 @@ pub async fn run_council(
                     started_at,
                     completed_at: None,
                     raw_response: None,
+                    citations: vec![],
                 },
             };
 
@@ -152,6 +165,18 @@ pub async fn run_council(
             results.push(result);
         }
     }
+
+    // Spec `missingPersonas`: members that produced no result or a failed one.
+    // Authoritative here — the judge's own enumeration is advisory.
+    let missing_personas: Vec<String> = personas
+        .iter()
+        .filter(|p| p.enabled)
+        .filter(|p| match results.iter().find(|r| r.persona_id == p.id) {
+            None => true,
+            Some(r) => r.status != "completed",
+        })
+        .map(|p| p.name.clone())
+        .collect();
 
     // 5. Build judge prompt
     let synthesis_prompt = build_judge_prompt(prompt, &results);
@@ -179,7 +204,7 @@ pub async fn run_council(
     )
     .await;
 
-    let judge_result = match judge_result {
+    let mut judge_result = match judge_result {
         Ok(r) => r,
         Err(e) => JudgeResult {
             summary: format!("Judge failed: {e}"),
@@ -194,8 +219,14 @@ pub async fn run_council(
             latency_ms: 0,
             cost: 0.0,
             raw_response: None,
+            diagrams: vec![],
+            citations: vec![],
+            missing_personas: vec![],
         },
     };
+
+    // Authoritative missing-personas list (judge's own list is advisory).
+    judge_result.missing_personas = missing_personas;
 
     // 7. Emit judge result
     app_handle.emit("judge-result", &judge_result).ok();
