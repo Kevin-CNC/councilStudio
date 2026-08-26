@@ -5,8 +5,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
-import ReactMarkdown from "react-markdown";
-import { lazy, Suspense } from "react";
 import { motion } from "framer-motion";
 import {
   Copy,
@@ -22,8 +20,7 @@ import { formatTokens, formatCost, formatDuration } from "@/lib/utils";
 import type { PersonaResult } from "@/types";
 import { PROVIDER_LABELS } from "@/lib/constants";
 import { RawResponseDialog } from "./RawResponseDialog";
-
-const CodeBlock = lazy(() => import("./CodeBlock"));
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface ResponseCardProps {
   result: PersonaResult;
@@ -53,6 +50,7 @@ export function ResponseCard({ result, streamingContent, isStreaming, color = "#
       transition={{ duration: 0.15 }}
     >
       <Card
+        id={`persona-result-${result.personaId}`}
         className={cn(
           "overflow-hidden transition-shadow contain-paint",
           isError && "border-destructive/50 bg-destructive/5"
@@ -142,32 +140,8 @@ export function ResponseCard({ result, streamingContent, isStreaming, color = "#
               <Skeleton className="h-4 w-3/5" />
             </div>
           ) : (
-            <div className="prose prose-sm prose-slate max-w-none dark:prose-invert">
-              <ReactMarkdown
-                components={{
-                  code({ node, className, children, ...props }) {
-                    const match = /language-(\w+)/.exec(className || "");
-                    const inline = !match;
-                    return !inline ? (
-                      <Suspense fallback={
-                        <pre className="rounded-lg bg-muted p-4 overflow-x-auto">
-                          <code className="text-xs">{String(children).replace(/\n$/, "")}</code>
-                        </pre>
-                      }>
-                        <CodeBlock language={match[1]}>
-                          {String(children).replace(/\n$/, "")}
-                        </CodeBlock>
-                      </Suspense>
-                    ) : (
-                      <code className={cn("rounded bg-muted px-1.5 py-0.5 text-xs", className)} {...props}>
-                        {children}
-                      </code>
-                    );
-                  },
-                }}
-              >
-                {content}
-              </ReactMarkdown>
+            <div>
+              <MarkdownRenderer content={content} citations={result.citations ?? []} />
               {isStreaming && (
                 <span className="inline-block w-2 h-4 bg-foreground animate-blink-3 ml-0.5" />
               )}

@@ -110,6 +110,12 @@ export interface JudgeResult {
   latencyMs: number;
   cost: number;
   rawResponse?: string;
+  /** Mermaid diagrams the judge wants rendered. */
+  diagrams?: Diagram[];
+  /** External sources the judge cited via `[{n}]` markers. */
+  citations?: Citation[];
+  /** Personas that failed/timed out (spec `missingPersonas`). */
+  missingPersonas?: string[];
 }
 
 export interface Citation {
@@ -118,6 +124,13 @@ export interface Citation {
   url?: string;
   excerpt: string;
   personaId: string;
+}
+
+/** A mermaid diagram a member or the judge wants rendered. `code` is raw source (no fences). */
+export interface Diagram {
+  id: string;
+  code: string;
+  caption?: string;
 }
 
 // In-memory image attachment held on the current prompt input. Never persisted.

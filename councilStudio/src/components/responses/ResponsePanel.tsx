@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "@/lib/utils";
@@ -10,7 +10,10 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ResponseCard } from "./ResponseCard";
 import { RawResponseDialog } from "./RawResponseDialog";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 import { motion, AnimatePresence } from "framer-motion";
+
+const DiagramBlock = lazy(() => import("./DiagramBlock"));
 import {
   LayoutGrid,
   GitMerge,
@@ -125,7 +128,9 @@ export function ResponsePanel() {
             {activeTab === "differences" && (
               <DifferencesTab judgeResult={judgeResult} judgeStatus={judgeStatus} />
             )}
-            {activeTab === "sources" && <SourcesTab results={results} />}
+            {activeTab === "sources" && (
+              <SourcesTab results={results} judgeResult={judgeResult} members={members} />
+            )}
             {activeTab === "timeline" && <TimelineTab results={results} />}
           </motion.div>
         </AnimatePresence>
@@ -204,6 +209,55 @@ function OverviewTab({ results, judgeResult, isRunning, judgeStatus }: any) {
           <p className="text-sm text-foreground leading-relaxed">{judgeResult.summary}</p>
         </CardContent>
       </Card>
+
+      {/* Missing personas */}
+      {judgeResult.missingPersonas && judgeResult.missingPersonas.length > 0 && (
+        <Card className="border-yellow-200 bg-yellow-50/60 dark:bg-yellow-950/20">
+          <CardContent className="p-4 text-sm text-foreground">
+            <span className="font-medium">Missing personas: </span>
+            {judgeResult.missingPersonas.join(", ")}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Judge synthesis (markdown, may include diagrams/citations) */}
+      {judgeResult.synthesis && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Gavel className="h-4 w-4 text-primary" />
+              Judge Synthesis
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MarkdownRenderer
+              content={judgeResult.synthesis}
+              citations={judgeResult.citations ?? []}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Judge diagrams */}
+      {judgeResult.diagrams && judgeResult.diagrams.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Diagrams</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {judgeResult.diagrams.map((d: any, i: number) => (
+              <Suspense
+                key={d.id ?? i}
+                fallback={
+                  <div className="text-xs text-muted-foreground">Rendering diagram…</div>
+                }
+              >
+                <DiagramBlock code={d.code} caption={d.caption} />
+              </Suspense>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Confidence score */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -421,9 +475,17 @@ function DifferencesTab({ judgeResult, judgeStatus }: any) {
   );
 }
 
-// Sources Tab
-function SourcesTab({ results }: any) {
-  const allCitations = results.flatMap((r: any) => r.citations || []);
+// Sources Tab — member + judge citations, with clickable URLs and persona names.
+function SourcesTab({ results, judgeResult, members }: any) {
+  const nameFor = (personaId: string) =>
+    personaId === "judge"
+      ? "Judge"
+      : (members.find((m: any) => m.id === personaId)?.name ?? personaId);
+
+  const allCitations = [
+    ...results.flatMap((r: any) => r.citations || []),
+    ...(judgeResult?.citations || []),
+  ];
 
   return (
     <div className="space-y-4">
@@ -439,15 +501,31 @@ function SourcesTab({ results }: any) {
             <p className="text-sm text-muted-foreground">No citations in this run.</p>
           ) : (
             <div className="space-y-2">
-              {allCitations.map((c: any) => (
-                <div key={c.id} className="rounded-lg border border-border p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-foreground">{c.source}</span>
-                    <Badge variant="outline" className="text-[10px]">
-                      {c.personaId}
+              {allCitations.map((c: any, i: number) => (
+                <div
+                  key={`${c.personaId}-${c.id}-${i}`}
+                  className="rounded-lg border border-border p-3"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    {c.url ? (
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-medium text-primary hover:underline"
+                      >
+                        {c.source}
+                      </a>
+                    ) : (
+                      <span className="text-sm font-medium text-foreground">{c.source}</span>
+                    )}
+                    <Badge variant="outline" className="text-[10px] shrink-0">
+                      {nameFor(c.personaId)}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground italic">{c.excerpt}</p>
+                  {c.excerpt && (
+                    <p className="text-xs text-muted-foreground italic">{c.excerpt}</p>
+                  )}
                 </div>
               ))}
             </div>
