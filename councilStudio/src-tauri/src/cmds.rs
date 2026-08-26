@@ -70,6 +70,30 @@ pub struct PersonaUpdate {
     pub reasoning_level: Option<String>,
 }
 
+/// A mermaid diagram a member or the judge wants rendered.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Diagram {
+    pub id: String,
+    /// Raw mermaid source (no fences).
+    pub code: String,
+    #[serde(default)]
+    pub caption: Option<String>,
+}
+
+/// An external source cited by a member or the judge, surfaced inline via
+/// `[{n}]` markers and listed in the Sources tab.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Citation {
+    pub id: String,
+    pub source: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    pub excerpt: String,
+    pub persona_id: String,
+}
+
 // Result struct for a response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +116,10 @@ pub struct PersonaResult {
     pub started_at: u64,
     pub completed_at: Option<u64>,
     pub raw_response: Option<String>,
+    /// External sources cited in `content` via `[{n}]` markers. Parsed out of
+    /// the response's trailing ```references block.
+    #[serde(default)]
+    pub citations: Vec<Citation>,
 }
 
 /// Structured synthesis from the judge persona.
@@ -111,6 +139,16 @@ pub struct JudgeResult {
     #[serde(default)]
     pub cost: f64,
     pub raw_response: Option<String>,
+    /// Mermaid diagrams the judge wants shown.
+    #[serde(default)]
+    pub diagrams: Vec<Diagram>,
+    /// Sources the judge cited in `summary`/`synthesis` via `[{n}]` markers.
+    #[serde(default)]
+    pub citations: Vec<Citation>,
+    /// Personas that failed/timed out (spec `missingPersonas`). The orchestrator
+    /// computes this authoritatively; the judge's own list is advisory.
+    #[serde(default)]
+    pub missing_personas: Vec<String>,
 }
 
 /// A single image attachment sent with a run. Session-only; never persisted as bytes.
