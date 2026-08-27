@@ -1,6 +1,7 @@
 mod cmds;
 mod compatibility;
 mod db;
+mod harness;
 mod models;
 mod orchestrator;
 mod pricing;
