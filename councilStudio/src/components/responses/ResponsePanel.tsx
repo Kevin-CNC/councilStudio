@@ -14,6 +14,7 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { motion, AnimatePresence } from "framer-motion";
 
 const DiagramBlock = lazy(() => import("./DiagramBlock"));
+const DataTableBlock = lazy(() => import("./DataTableBlock"));
 import {
   LayoutGrid,
   GitMerge,
@@ -206,7 +207,11 @@ function OverviewTab({ results, judgeResult, isRunning, judgeStatus }: any) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-foreground leading-relaxed">{judgeResult.summary}</p>
+          <MarkdownRenderer
+            content={judgeResult.summary}
+            citations={judgeResult.citations ?? []}
+            tables={judgeResult.tables ?? []}
+          />
         </CardContent>
       </Card>
 
@@ -233,7 +238,29 @@ function OverviewTab({ results, judgeResult, isRunning, judgeStatus }: any) {
             <MarkdownRenderer
               content={judgeResult.synthesis}
               citations={judgeResult.citations ?? []}
+              tables={judgeResult.tables ?? []}
             />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Judge tables (from the JSON `tables` array — no inline placement) */}
+      {judgeResult.tables && judgeResult.tables.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Tables</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {judgeResult.tables.map((t: any, i: number) => (
+              <Suspense
+                key={t.id ?? i}
+                fallback={
+                  <div className="text-xs text-muted-foreground">Rendering table…</div>
+                }
+              >
+                <DataTableBlock table={t} />
+              </Suspense>
+            ))}
           </CardContent>
         </Card>
       )}

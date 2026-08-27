@@ -141,7 +141,11 @@ export function ResponseCard({ result, streamingContent, isStreaming, color = "#
             </div>
           ) : (
             <div>
-              <MarkdownRenderer content={content} citations={result.citations ?? []} />
+              <MarkdownRenderer
+                content={content}
+                citations={result.citations ?? []}
+                tables={result.tables ?? []}
+              />
               {isStreaming && (
                 <span className="inline-block w-2 h-4 bg-foreground animate-blink-3 ml-0.5" />
               )}
