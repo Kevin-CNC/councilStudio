@@ -81,6 +81,20 @@ pub struct Diagram {
     pub caption: Option<String>,
 }
 
+/// A structured data table a member or the judge wants rendered. Extracted
+/// from ```table fenced JSON blocks (members) or the judge's `tables` array;
+/// members reference it in-place via a `{{table:n}}` marker left in `content`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Table {
+    pub id: String,
+    #[serde(default)]
+    pub caption: Option<String>,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub persona_id: String,
+}
+
 /// An external source cited by a member or the judge, surfaced inline via
 /// `[{n}]` markers and listed in the Sources tab.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -120,6 +134,10 @@ pub struct PersonaResult {
     /// the response's trailing ```references block.
     #[serde(default)]
     pub citations: Vec<Citation>,
+    /// Structured tables extracted from ```table fenced blocks in `content`;
+    /// each block is replaced by a `{{table:n}}` marker (1-based, in order).
+    #[serde(default)]
+    pub tables: Vec<Table>,
 }
 
 /// Structured synthesis from the judge persona.
@@ -145,6 +163,11 @@ pub struct JudgeResult {
     /// Sources the judge cited in `summary`/`synthesis` via `[{n}]` markers.
     #[serde(default)]
     pub citations: Vec<Citation>,
+    /// Tables the judge wants shown — from its JSON `tables` array plus any
+    /// ```table fences in `summary`/`synthesis` (markers `{{table:n}}` left
+    /// inline, numbered across both fields in order).
+    #[serde(default)]
+    pub tables: Vec<Table>,
     /// Personas that failed/timed out (spec `missingPersonas`). The orchestrator
     /// computes this authoritatively; the judge's own list is advisory.
     #[serde(default)]

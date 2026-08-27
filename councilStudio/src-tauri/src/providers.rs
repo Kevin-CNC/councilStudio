@@ -6,7 +6,7 @@
 //! - `judge_call` — the judge synthesis call. Reuses `chat_completion` and
 //!   parses the structured JSON verdict.
 
-use crate::cmds::{Citation, Diagram, JudgeResult, PersonaResult, RunAttachment};
+use crate::cmds::{Citation, Diagram, JudgeResult, PersonaResult, RunAttachment, Table};
 use crate::pricing;
 use serde::{Deserialize, Serialize};
 
@@ -248,9 +248,10 @@ pub async fn chat_completion(
     let completed_at = now_millis();
     let cost = pricing::resolve_cost(client, req.provider, req.model, &usage).await;
 
-    // Harness: strip the trailing ```references fence into typed citations,
-    // leaving mermaid fences and `[{n}]`/`{{@Name}}` markers in the content.
-    let (content, citations) = crate::harness::parse_persona_response(&content);
+    // Harness: strip the trailing ```references fence into typed citations and
+    // ```table fences into typed tables, leaving mermaid fences and
+    // `[{n}]`/`{{@Name}}`/`{{table:n}}` markers in the content.
+    let (content, citations, tables) = crate::harness::parse_persona_response(&content);
 
     Ok(PersonaResult {
         persona_id: String::new(),   // filled by orchestrator
@@ -270,10 +271,11 @@ pub async fn chat_completion(
         completed_at: Some(completed_at),
         raw_response: Some(raw_response),
         citations, // persona_id filled by orchestrator
+        tables,    // persona_id filled by orchestrator
     })
 }
 
-const JUDGE_SYSTEM_PROMPT: &str = "You are a council judge. Your job is to synthesize multiple AI persona responses into a structured evaluation. Always output valid JSON with the fields: summary, consensus, disagreements, minority_views, recommendations, confidence_score, synthesis, diagrams, citations, missing_personas. Never omit a field. `diagrams` is an array of {\"id\",\"code\",\"caption\"} where `code` is raw mermaid source (no fences) — only include a diagram if one genuinely helps. `citations` is an array of {\"id\",\"source\",\"url\",\"excerpt\"} for external sources referenced in your text via [{n}] markers. `missing_personas` is an array of the persona names that failed or produced no usable response. `summary` and `synthesis` are markdown and may contain ```mermaid fences and [{n}] citation markers. Never emit raw HTML.";
+const JUDGE_SYSTEM_PROMPT: &str = "You are a council judge. Your job is to synthesize multiple AI persona responses into a structured evaluation. Always output valid JSON with the fields: summary, consensus, disagreements, minority_views, recommendations, confidence_score, synthesis, diagrams, citations, tables, missing_personas. Never omit a field. `diagrams` is an array of {\"id\",\"code\",\"caption\"} where `code` is raw mermaid source (no fences) — only include a diagram if one genuinely helps. `citations` is an array of {\"id\",\"source\",\"url\",\"excerpt\"} for external sources referenced in your text via [{n}] markers. `tables` is an array of {\"id\",\"caption\",\"columns\":[\"...\"],\"rows\":[[\"...\"]]} for structured comparison data (each row has one cell per column) — emit [] when nothing tabular helps. `missing_personas` is an array of the persona names that failed or produced no usable response. `summary` and `synthesis` are markdown and may contain ```mermaid fences, [{n}] citation markers and ```table fenced blocks (a ```table fence holds ONE JSON object {\"caption\",\"columns\",\"rows\"}). Never emit raw HTML.";
 
 /// Tolerant wire shape for the judge's JSON verdict. The judge model emits
 /// snake_case keys and no token/latency fields, so this is kept separate from
@@ -299,6 +301,8 @@ struct JudgeVerdict {
     diagrams: Vec<Diagram>,
     #[serde(default, alias = "citations")]
     citations: Vec<Citation>,
+    #[serde(default, alias = "tables")]
+    tables: Vec<Table>,
     #[serde(default, alias = "missingPersonas")]
     missing_personas: Vec<String>,
 }
@@ -336,14 +340,27 @@ pub async fn judge_call(
     let json_str = extract_json_object(&result.content);
     match serde_json::from_str::<JudgeVerdict>(json_str) {
         Ok(mut v) => {
-            // Judge citations belong to the judge; strip any leftover
-            // ```references fence from the markdown fields (citations come from
-            // the JSON array). Mermaid fences + `[{n}]` markers stay for the UI.
+            // Judge citations/tables belong to the judge. Strip any leftover
+            // ```references fence from the markdown fields (citations come
+            // from the JSON array); ```table fences in summary/synthesis are
+            // extracted and merged ahead of the JSON `tables` array, with
+            // their `{{table:n}}` markers renumbered across both fields.
             for c in v.citations.iter_mut() {
                 c.persona_id = "judge".to_string();
             }
-            let (summary, _) = crate::harness::parse_persona_response(&v.summary);
-            let (synthesis, _) = crate::harness::parse_persona_response(&v.synthesis);
+            let (summary, _, mut summary_tables) =
+                crate::harness::parse_persona_response(&v.summary);
+            let (synthesis_raw, _, synthesis_tables) =
+                crate::harness::parse_persona_response(&v.synthesis);
+            let synthesis =
+                crate::harness::shift_table_markers(&synthesis_raw, summary_tables.len());
+            let mut tables = Vec::new();
+            tables.append(&mut summary_tables);
+            tables.extend(synthesis_tables);
+            tables.extend(v.tables);
+            for t in tables.iter_mut() {
+                t.persona_id = "judge".to_string();
+            }
             Ok(JudgeResult {
                 summary,
                 consensus: v.consensus,
@@ -359,11 +376,18 @@ pub async fn judge_call(
                 raw_response: result.raw_response.clone(),
                 diagrams: v.diagrams,
                 citations: v.citations,
+                tables,
                 missing_personas: v.missing_personas,
             })
         }
         Err(_) => {
-            // Judge didn't return valid JSON; keep raw content as synthesis.
+            // Judge didn't return valid JSON; keep raw content as synthesis,
+            // still harvesting any ```table fences it contained.
+            let (synthesis, _, mut tables) =
+                crate::harness::parse_persona_response(&result.content);
+            for t in tables.iter_mut() {
+                t.persona_id = "judge".to_string();
+            }
             Ok(JudgeResult {
                 summary: "Judge response (unstructured)".to_string(),
                 consensus: vec![],
@@ -371,7 +395,7 @@ pub async fn judge_call(
                 minority_views: vec![],
                 recommendations: vec![],
                 confidence_score: 50,
-                synthesis: result.content,
+                synthesis,
                 tokens_in: result.tokens_in,
                 tokens_out: result.tokens_out,
                 latency_ms,
@@ -379,6 +403,7 @@ pub async fn judge_call(
                 raw_response: result.raw_response.clone(),
                 diagrams: vec![],
                 citations: vec![],
+                tables,
                 missing_personas: vec![],
             })
         }
