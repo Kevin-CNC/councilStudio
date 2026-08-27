@@ -2,10 +2,19 @@ export type Theme = "light" | "dark";
 
 export type Provider = "anthropic" | "openai" | "openrouter" | "ollama";
 
-export type RunStatus = "queued" | "running" | "streaming" | "completed" | "partial" | "failed" | "cancelled" | "terminated";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "streaming"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelled"
+  | "terminated";
 
 /** Live per-member progress during a council run. */
-export type MemberRunStatus = "waiting" | "thinking" | "completed" | "failed" | "cancelled";
+export type MemberRunStatus =
+  "waiting" | "thinking" | "completed" | "failed" | "cancelled";
 
 export interface Persona {
   id: string;
@@ -93,6 +102,8 @@ export interface PersonaResult {
   inputCost: number;
   outputCost: number;
   citations?: Citation[];
+  /** Tables extracted from ```table fences; `{{table:n}}` markers stay inline in `content`. */
+  tables?: Table[];
   startedAt: number;
   completedAt?: number;
 }
@@ -114,6 +125,8 @@ export interface JudgeResult {
   diagrams?: Diagram[];
   /** External sources the judge cited via `[{n}]` markers. */
   citations?: Citation[];
+  /** Tables the judge wants shown (JSON array plus ```table fences in summary/synthesis). */
+  tables?: Table[];
   /** Personas that failed/timed out (spec `missingPersonas`). */
   missingPersonas?: string[];
 }
@@ -131,6 +144,15 @@ export interface Diagram {
   id: string;
   code: string;
   caption?: string;
+}
+
+/** A structured data table a member or the judge wants rendered. Rows are rectangular (one cell per column). */
+export interface Table {
+  id: string;
+  caption?: string;
+  columns: string[];
+  rows: string[][];
+  personaId: string;
 }
 
 // In-memory image attachment held on the current prompt input. Never persisted.
