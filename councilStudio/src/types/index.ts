@@ -129,6 +129,12 @@ export interface JudgeResult {
   tables?: Table[];
   /** Personas that failed/timed out (spec `missingPersonas`). */
   missingPersonas?: string[];
+  /** Wall-clock start of the judge call (unix ms) — drives the telemetry lane. */
+  startedAt?: number;
+  /** Wall-clock end of the judge call (unix ms); absent while still running. */
+  completedAt?: number;
+  /** `false` → UI shows an unstructured-output banner; `undefined` treated as structured. */
+  structured?: boolean;
 }
 
 export interface Citation {
