@@ -172,6 +172,21 @@ pub struct JudgeResult {
     /// computes this authoritatively; the judge's own list is advisory.
     #[serde(default)]
     pub missing_personas: Vec<String>,
+    /// Wall-clock start of the judge call (unix ms) — drives the telemetry lane.
+    #[serde(default)]
+    pub started_at: u64,
+    /// Wall-clock end of the judge call (unix ms); `None` while still running.
+    #[serde(default)]
+    pub completed_at: Option<u64>,
+    /// Whether the judge returned parseable structured JSON. `false` → the UI
+    /// shows an "unstructured" banner. Defaults true so legacy stored sessions
+    /// parse as structured.
+    #[serde(default = "default_true")]
+    pub structured: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// A single image attachment sent with a run. Session-only; never persisted as bytes.
