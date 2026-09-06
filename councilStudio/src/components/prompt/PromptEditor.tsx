@@ -22,12 +22,11 @@ import {
   Play,
   Square,
   Paperclip,
-  Mic,
-  BookOpen,
   Gavel,
   X,
   GripHorizontal,
 } from "lucide-react";
+import { KnowledgeBaseIcon, VoiceIcon } from "@/components/icons/AppIcons";
 
 const MAX_CHARS = 4000;
 const MIN_EDITOR_HEIGHT = 120;
@@ -302,12 +301,12 @@ export function PromptEditor() {
           <Paperclip className="h-4 w-4" />
         </Button>
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
-          <Mic className="h-4 w-4" />
+          <VoiceIcon className="h-4 w-4" />
         </Button>
 
         <PromptHistory onSelect={(prompt) => setPrompt(prompt)}>
           <Button id="prompt-history-button" variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground">
-            <BookOpen className="h-3.5 w-3.5" />
+            <KnowledgeBaseIcon className="h-3.5 w-3.5" />
             Templates
           </Button>
         </PromptHistory>
