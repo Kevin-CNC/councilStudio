@@ -10,7 +10,7 @@ use tauri::{Emitter, Manager};
 
 fn build_judge_prompt(prompt: &str, results: &[PersonaResult]) -> String {
     let mut p = format!(
-        "You are a council judge. Synthesize the following responses from {} AI personas to the question below.\n\nReturn ONLY valid JSON (no markdown, no code fences) with exactly these fields:\n- summary: string — overall synthesis\n- consensus: string[] — points most personas agree on\n- disagreements: string[] — points where personas conflict\n- minority_views: string[] — claims made by only one persona\n- recommendations: string[] — actionable next steps\n- confidence_score: number 0-100 — how confident the synthesis is\n- synthesis: string — detailed narrative synthesis\n- diagrams: array of {{\"id\": string, \"code\": string, \"caption\": string}} — `code` is raw mermaid source (no fences). Include only if a diagram genuinely helps; else [].\n- citations: array of {{\"id\": string, \"source\": string, \"url\": string, \"excerpt\": string}} — external sources you reference in summary/synthesis via [{{n}}] markers; else [].\n- tables: array of {{\"id\": string, \"caption\": string, \"columns\": [string], \"rows\": [[string]]}} — structured comparison data; each row has one cell per column; else [].\n- missing_personas: string[] — names of personas that failed or gave no usable response.\n\n`summary` and `synthesis` are markdown and may contain ```mermaid fences, [{{n}}] citation markers and ```table fenced blocks (one JSON object {{\"caption\",\"columns\",\"rows\"}}). Never emit raw HTML.\n\n## QUESTION\n{}\n\n## PERSONA RESPONSES\n\n",
+        "You are a council judge. Synthesize the following responses from {} AI personas to the question below.\n\nRespond with ONLY a single JSON object. Begin with `{{`, end with `}}`. No markdown, no code fences, no prose. Use exactly these fields:\n- summary: string — overall synthesis\n- consensus: string[] — points most personas agree on\n- disagreements: string[] — points where personas conflict\n- minority_views: string[] — claims made by only one persona\n- recommendations: string[] — actionable next steps\n- confidence_score: number 0-100 — how confident the synthesis is\n- synthesis: string — detailed narrative synthesis\n- diagrams: array of {{\"id\": string, \"code\": string, \"caption\": string}} — `code` is raw mermaid source (no fences). Include only if a diagram genuinely helps; else [].\n- citations: array of {{\"id\": string, \"source\": string, \"url\": string, \"excerpt\": string}} — external sources you reference in summary/synthesis via [{{n}}] markers; each marker's `n` must equal that citation's string `id`; else [].\n- tables: array of {{\"id\": string, \"caption\": string, \"columns\": [string], \"rows\": [[string]]}} — structured comparison data; each row has one cell per column; else [].\n- missing_personas: string[] — names of personas that failed or gave no usable response.\n\n`summary` and `synthesis` are markdown and may contain ```mermaid fences, [{{n}}] citation markers, {{{{@Name}}}} cross-references to persona names, and ```table fenced blocks (one JSON object {{\"caption\",\"columns\",\"rows\"}} — auto-extracted and renumbered, so prefer the JSON `tables` array). Never emit raw HTML.\n\n## QUESTION\n{}\n\n## PERSONA RESPONSES\n\n",
         results.len(),
         prompt
     );
@@ -227,6 +227,9 @@ pub async fn run_council(
             citations: vec![],
             tables: vec![],
             missing_personas: vec![],
+            started_at: 0,
+            completed_at: None,
+            structured: false,
         },
     };
 

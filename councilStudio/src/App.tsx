@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { KeyboardProvider } from "@/components/layout/KeyboardProvider";
 import { LoaderScreen } from "@/components/layout/LoaderScreen";
 import { Toaster } from "@/components/ui/toaster";
+import { ExternalLinkDialog } from "@/components/responses/ExternalLinkDialog";
 import { useAppStore, initStoreListeners, resetListenerGuard } from "@/stores/appStore";
 import { seedDefaultMembers } from "@/lib/tauri-bridge";
 
@@ -71,6 +72,7 @@ function App() {
           <LoaderScreen />
         )}
         <Toaster />
+        <ExternalLinkDialog />
       </KeyboardProvider>
     </TooltipProvider>
   );

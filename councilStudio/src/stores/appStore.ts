@@ -95,7 +95,7 @@ function storedRecord(key: string): Record<string, string> {
   }
 }
 
-type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
+type TabId = "overview" | "responses" | "consensus" | "sources" | "timeline";
 type ViewId = "home" | "prompts" | "sessions" | "members";
 
 /** Internal active run — personaResults stored as Record for O(1) streaming updates. */
@@ -168,8 +168,11 @@ interface AppState {
   shortcuts: Record<ShortcutAction, ShortcutBinding>;
   importPreviewOpen: boolean;
   importPreviewData: { type: "members" | "templates"; items: MemberExportItem[] | TemplateExportItem[]; fileName: string } | null;
+  /** External URL awaiting user confirmation before opening in the browser. */
+  pendingExternalUrl: string | null;
   setImportPreviewOpen: (open: boolean) => void;
   setImportPreviewData: (data: AppState["importPreviewData"]) => void;
+  setPendingExternalUrl: (url: string | null) => void;
 
   // Actions - Members
   loadMembers: () => Promise<void>;
@@ -301,6 +304,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   shortcuts: loadShortcuts(),
   importPreviewOpen: false,
   importPreviewData: null,
+  pendingExternalUrl: null,
 
   // --- Member actions (async, backed by SQLite via Tauri) ---
 
@@ -1022,6 +1026,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setImportPreviewOpen: (open) => set({ importPreviewOpen: open }),
 
   setImportPreviewData: (data) => set({ importPreviewData: data }),
+
+  setPendingExternalUrl: (url) => set({ pendingExternalUrl: url }),
 }));
 
 /**

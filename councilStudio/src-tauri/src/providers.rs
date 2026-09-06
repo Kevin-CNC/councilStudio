@@ -275,7 +275,7 @@ pub async fn chat_completion(
     })
 }
 
-const JUDGE_SYSTEM_PROMPT: &str = "You are a council judge. Your job is to synthesize multiple AI persona responses into a structured evaluation. Always output valid JSON with the fields: summary, consensus, disagreements, minority_views, recommendations, confidence_score, synthesis, diagrams, citations, tables, missing_personas. Never omit a field. `diagrams` is an array of {\"id\",\"code\",\"caption\"} where `code` is raw mermaid source (no fences) — only include a diagram if one genuinely helps. `citations` is an array of {\"id\",\"source\",\"url\",\"excerpt\"} for external sources referenced in your text via [{n}] markers. `tables` is an array of {\"id\",\"caption\",\"columns\":[\"...\"],\"rows\":[[\"...\"]]} for structured comparison data (each row has one cell per column) — emit [] when nothing tabular helps. `missing_personas` is an array of the persona names that failed or produced no usable response. `summary` and `synthesis` are markdown and may contain ```mermaid fences, [{n}] citation markers and ```table fenced blocks (a ```table fence holds ONE JSON object {\"caption\",\"columns\",\"rows\"}). Never emit raw HTML.";
+const JUDGE_SYSTEM_PROMPT: &str = "You are a council judge. Your job is to synthesize multiple AI persona responses into a structured evaluation. Respond with ONLY a single JSON object. Begin with `{`, end with `}`. No markdown, no code fences, no prose. Minimal example: {\"summary\":\"…\",\"consensus\":[],\"disagreements\":[],\"minority_views\":[],\"recommendations\":[],\"confidence_score\":50,\"synthesis\":\"…\",\"diagrams\":[],\"citations\":[],\"tables\":[],\"missing_personas\":[]}. Always output valid JSON with the fields: summary, consensus, disagreements, minority_views, recommendations, confidence_score, synthesis, diagrams, citations, tables, missing_personas. Never omit a field. `diagrams` is an array of {\"id\",\"code\",\"caption\"} where `code` is raw mermaid source (no fences) — only include a diagram if one genuinely helps. `citations` is an array of {\"id\",\"source\",\"url\",\"excerpt\"} for external sources referenced in your text via [{n}] markers. `tables` is an array of {\"id\",\"caption\",\"columns\":[\"...\"],\"rows\":[[\"...\"]]} for structured comparison data (each row has one cell per column) — emit [] when nothing tabular helps. `missing_personas` is an array of the persona names that failed or produced no usable response. `summary` and `synthesis` are markdown and may contain ```mermaid fences, [{n}] citation markers and ```table fenced blocks (a ```table fence holds ONE JSON object {\"caption\",\"columns\",\"rows\"}). Never emit raw HTML.";
 
 /// Tolerant wire shape for the judge's JSON verdict. The judge model emits
 /// snake_case keys and no token/latency fields, so this is kept separate from
@@ -316,15 +316,293 @@ fn extract_json_object(s: &str) -> &str {
     }
 }
 
+/// Parse the judge's JSON verdict out of possibly fenced/prose-wrapped content.
+fn parse_judge_json(content: &str) -> Result<JudgeVerdict, serde_json::Error> {
+    serde_json::from_str::<JudgeVerdict>(extract_json_object(content))
+}
+
+/// Build a structured JudgeResult from a parsed verdict. ```references fence
+/// citations and ```table fences in `summary`/`synthesis` are captured (not
+/// discarded) and merged with the JSON arrays; citations are deduped by
+/// (id, source) because duplicate ids break the frontend `#cit-{id}` chip
+/// mapping. `{{table:n}}` markers are renumbered across both fields.
+#[allow(clippy::too_many_arguments)]
+fn assemble_structured_judge(
+    v: JudgeVerdict,
+    tokens_in: u64,
+    tokens_out: u64,
+    cost: f64,
+    raw_response: Option<String>,
+    started_at: u64,
+    completed_at: u64,
+) -> JudgeResult {
+    let (summary, summary_citations, mut summary_tables) =
+        crate::harness::parse_persona_response(&v.summary);
+    let (synthesis_raw, synthesis_citations, synthesis_tables) =
+        crate::harness::parse_persona_response(&v.synthesis);
+    let synthesis = crate::harness::shift_table_markers(&synthesis_raw, summary_tables.len());
+    let mut tables = Vec::new();
+    tables.append(&mut summary_tables);
+    tables.extend(synthesis_tables);
+    tables.extend(v.tables);
+    for t in tables.iter_mut() {
+        t.persona_id = "judge".to_string();
+    }
+    let mut citations = v.citations;
+    citations.extend(summary_citations);
+    citations.extend(synthesis_citations);
+    let mut seen = std::collections::HashSet::new();
+    citations.retain(|c| seen.insert((c.id.clone(), c.source.clone())));
+    for c in citations.iter_mut() {
+        c.persona_id = "judge".to_string();
+    }
+    JudgeResult {
+        summary,
+        consensus: v.consensus,
+        disagreements: v.disagreements,
+        minority_views: v.minority_views,
+        recommendations: v.recommendations,
+        confidence_score: v.confidence_score.round().clamp(0.0, 100.0) as u32,
+        synthesis,
+        tokens_in,
+        tokens_out,
+        latency_ms: completed_at.saturating_sub(started_at),
+        cost,
+        raw_response,
+        diagrams: v.diagrams,
+        citations,
+        tables,
+        missing_personas: v.missing_personas,
+        started_at,
+        completed_at: Some(completed_at),
+        structured: true,
+    }
+}
+
+/// Headings the salvage heuristic recognizes (case-insensitive), plus their
+/// structured-field target.
+#[derive(PartialEq, Clone, Copy)]
+enum SalvageSection {
+    None,
+    Summary,
+    Synthesis,
+    Consensus,
+    Disagreements,
+    Minority,
+    Recommendations,
+    Confidence,
+}
+
+fn salvage_section_for(heading: &str) -> SalvageSection {
+    let h = heading
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .trim_matches('*')
+        .trim()
+        .trim_end_matches(':')
+        .to_lowercase();
+    match h.as_str() {
+        "summary" => SalvageSection::Summary,
+        "synthesis" => SalvageSection::Synthesis,
+        "consensus" | "agreement" | "agreements" | "areas of agreement" => {
+            SalvageSection::Consensus
+        }
+        "disagreements" | "disagreement" | "differences" | "points of disagreement" => {
+            SalvageSection::Disagreements
+        }
+        "minority views" | "minority view" => SalvageSection::Minority,
+        "recommendations" | "recommendation" => SalvageSection::Recommendations,
+        "confidence" | "confidence score" => SalvageSection::Confidence,
+        _ => SalvageSection::None,
+    }
+}
+
+/// Split accumulated section lines into list items: strip `-`/`*`/`•` bullets,
+/// `N.`/`N)` numbering, and blank lines.
+fn split_list_items(lines: &[&str]) -> Vec<String> {
+    let mut items = Vec::new();
+    for line in lines {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let stripped = if let Some(rest) = t
+            .strip_prefix("- ")
+            .or_else(|| t.strip_prefix("* "))
+            .or_else(|| t.strip_prefix("• "))
+        {
+            rest.trim()
+        } else {
+            let bytes = t.as_bytes();
+            let mut i = 0;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i > 0
+                && i + 1 < bytes.len()
+                && (bytes[i] == b'.' || bytes[i] == b')')
+                && bytes[i + 1] == b' '
+            {
+                t[i + 2..].trim()
+            } else {
+                t
+            }
+        };
+        if !stripped.is_empty() {
+            items.push(stripped.to_string());
+        }
+    }
+    items
+}
+
+/// First `NN%` found in the accumulated confidence lines, clamped to 0–100.
+fn parse_salvage_confidence(lines: &[&str]) -> Option<u32> {
+    for line in lines {
+        let bytes = line.as_bytes();
+        for (i, &b) in bytes.iter().enumerate() {
+            if b == b'%' {
+                let mut start = i;
+                while start > 0 && bytes[start - 1].is_ascii_digit() {
+                    start -= 1;
+                }
+                if start < i {
+                    if let Ok(n) = line[start..i].parse::<u32>() {
+                        return Some(n.min(100));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Fallback when the judge never produces valid JSON: run the standard
+/// persona harness (harvesting ```table fences and citations), then
+/// heuristically split markdown headings into the structured fields. With no
+/// recognizable headings the raw text lands in `synthesis` and the result is
+/// flagged `structured: false` so the UI can show a banner.
+#[allow(clippy::too_many_arguments)]
+fn salvage_unstructured_judge(
+    content: &str,
+    tokens_in: u64,
+    tokens_out: u64,
+    cost: f64,
+    raw_response: Option<String>,
+    started_at: u64,
+    completed_at: u64,
+) -> JudgeResult {
+    let (text, mut citations, mut tables) = crate::harness::parse_persona_response(content);
+    for c in citations.iter_mut() {
+        c.persona_id = "judge".to_string();
+    }
+    for t in tables.iter_mut() {
+        t.persona_id = "judge".to_string();
+    }
+
+    let mut summary_lines: Vec<&str> = Vec::new();
+    let mut synthesis_lines: Vec<&str> = Vec::new();
+    let mut consensus_lines: Vec<&str> = Vec::new();
+    let mut disagreement_lines: Vec<&str> = Vec::new();
+    let mut minority_lines: Vec<&str> = Vec::new();
+    let mut recommendation_lines: Vec<&str> = Vec::new();
+    let mut confidence_lines: Vec<&str> = Vec::new();
+
+    let mut current = SalvageSection::None;
+    let mut matched = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let looks_like_heading = trimmed.starts_with('#')
+            || (trimmed.starts_with("**") && trimmed.ends_with("**") && trimmed.len() > 4);
+        if looks_like_heading {
+            let section = salvage_section_for(trimmed);
+            if section != SalvageSection::None {
+                matched = true;
+                current = section;
+                continue;
+            }
+        }
+        match current {
+            SalvageSection::Summary => summary_lines.push(line),
+            SalvageSection::Synthesis => synthesis_lines.push(line),
+            SalvageSection::Consensus => consensus_lines.push(line),
+            SalvageSection::Disagreements => disagreement_lines.push(line),
+            SalvageSection::Minority => minority_lines.push(line),
+            SalvageSection::Recommendations => recommendation_lines.push(line),
+            SalvageSection::Confidence => confidence_lines.push(line),
+            SalvageSection::None => {}
+        }
+    }
+
+    if !matched {
+        // No recognizable headings — keep the whole raw text in synthesis.
+        return JudgeResult {
+            summary: "Judge response (unstructured)".to_string(),
+            consensus: vec![],
+            disagreements: vec![],
+            minority_views: vec![],
+            recommendations: vec![],
+            confidence_score: 50,
+            synthesis: text,
+            tokens_in,
+            tokens_out,
+            latency_ms: completed_at.saturating_sub(started_at),
+            cost,
+            raw_response,
+            diagrams: vec![],
+            citations,
+            tables,
+            missing_personas: vec![],
+            started_at,
+            completed_at: Some(completed_at),
+            structured: false,
+        };
+    }
+
+    let synthesis = synthesis_lines.join("\n").trim().to_string();
+    let mut summary = summary_lines.join("\n").trim().to_string();
+    if summary.is_empty() && !synthesis.is_empty() {
+        // Fall back to a shortened synthesis so the summary card renders.
+        summary = synthesis.chars().take(200).collect();
+    }
+    JudgeResult {
+        summary,
+        consensus: split_list_items(&consensus_lines),
+        disagreements: split_list_items(&disagreement_lines),
+        minority_views: split_list_items(&minority_lines),
+        recommendations: split_list_items(&recommendation_lines),
+        confidence_score: parse_salvage_confidence(&confidence_lines).unwrap_or(50),
+        synthesis,
+        tokens_in,
+        tokens_out,
+        latency_ms: completed_at.saturating_sub(started_at),
+        cost,
+        raw_response,
+        diagrams: vec![],
+        citations,
+        tables,
+        missing_personas: vec![],
+        started_at,
+        completed_at: Some(completed_at),
+        // Sections recovered ⇒ structured, even though the raw judge output
+        // was not JSON.
+        structured: true,
+    }
+}
+
 /// Judge call — provider-independent like `chat_completion`, with the judge
-/// system prompt applied and the response parsed into a JudgeResult.
+/// system prompt applied and the response parsed into a JudgeResult. A
+/// non-JSON first response is retried once with a stricter instruction
+/// (usage summed across both calls, retry raw response kept); a heuristic
+/// salvage runs on the best content if the retry also fails. Timestamps and
+/// latency reflect the total wall time including the retry.
 pub async fn judge_call(
     client: &reqwest::Client,
     req: ChatRequest<'_>,
 ) -> Result<JudgeResult, String> {
     let started_at = now_millis();
 
-    let result = chat_completion(
+    let first = chat_completion(
         client,
         ChatRequest {
             system_prompt: JUDGE_SYSTEM_PROMPT,
@@ -333,81 +611,59 @@ pub async fn judge_call(
     )
     .await?;
 
-    let completed_at = now_millis();
-    let latency_ms = completed_at - started_at;
+    let mut tokens_in = first.tokens_in;
+    let mut tokens_out = first.tokens_out;
+    let mut cost = first.cost;
+    let mut content = first.content.clone();
+    let mut raw_response = first.raw_response.clone();
+    let mut verdict = parse_judge_json(&first.content).ok();
 
-    // Judges wrap JSON in code fences or prose — extract the object first.
-    let json_str = extract_json_object(&result.content);
-    match serde_json::from_str::<JudgeVerdict>(json_str) {
-        Ok(mut v) => {
-            // Judge citations/tables belong to the judge. Strip any leftover
-            // ```references fence from the markdown fields (citations come
-            // from the JSON array); ```table fences in summary/synthesis are
-            // extracted and merged ahead of the JSON `tables` array, with
-            // their `{{table:n}}` markers renumbered across both fields.
-            for c in v.citations.iter_mut() {
-                c.persona_id = "judge".to_string();
-            }
-            let (summary, _, mut summary_tables) =
-                crate::harness::parse_persona_response(&v.summary);
-            let (synthesis_raw, _, synthesis_tables) =
-                crate::harness::parse_persona_response(&v.synthesis);
-            let synthesis =
-                crate::harness::shift_table_markers(&synthesis_raw, summary_tables.len());
-            let mut tables = Vec::new();
-            tables.append(&mut summary_tables);
-            tables.extend(synthesis_tables);
-            tables.extend(v.tables);
-            for t in tables.iter_mut() {
-                t.persona_id = "judge".to_string();
-            }
-            Ok(JudgeResult {
-                summary,
-                consensus: v.consensus,
-                disagreements: v.disagreements,
-                minority_views: v.minority_views,
-                recommendations: v.recommendations,
-                confidence_score: v.confidence_score.round().clamp(0.0, 100.0) as u32,
-                synthesis,
-                tokens_in: result.tokens_in,
-                tokens_out: result.tokens_out,
-                latency_ms,
-                cost: result.cost,
-                raw_response: result.raw_response.clone(),
-                diagrams: v.diagrams,
-                citations: v.citations,
-                tables,
-                missing_personas: v.missing_personas,
-            })
-        }
-        Err(_) => {
-            // Judge didn't return valid JSON; keep raw content as synthesis,
-            // still harvesting any ```table fences it contained.
-            let (synthesis, _, mut tables) =
-                crate::harness::parse_persona_response(&result.content);
-            for t in tables.iter_mut() {
-                t.persona_id = "judge".to_string();
-            }
-            Ok(JudgeResult {
-                summary: "Judge response (unstructured)".to_string(),
-                consensus: vec![],
-                disagreements: vec![],
-                minority_views: vec![],
-                recommendations: vec![],
-                confidence_score: 50,
-                synthesis,
-                tokens_in: result.tokens_in,
-                tokens_out: result.tokens_out,
-                latency_ms,
-                cost: result.cost,
-                raw_response: result.raw_response.clone(),
-                diagrams: vec![],
-                citations: vec![],
-                tables,
-                missing_personas: vec![],
-            })
+    if verdict.is_none() {
+        let retry_prompt = format!(
+            "Your previous response was not valid JSON. Return ONLY a single valid JSON object beginning with '{{' and ending with '}}'. No markdown, no code fences, no prose.\n\n{}",
+            req.user_prompt
+        );
+        if let Ok(second) = chat_completion(
+            client,
+            ChatRequest {
+                system_prompt: JUDGE_SYSTEM_PROMPT,
+                user_prompt: &retry_prompt,
+                ..req
+            },
+        )
+        .await
+        {
+            tokens_in += second.tokens_in;
+            tokens_out += second.tokens_out;
+            cost += second.cost;
+            content = second.content;
+            raw_response = second.raw_response;
+            verdict = parse_judge_json(&content).ok();
         }
     }
+
+    let completed_at = now_millis();
+
+    Ok(match verdict {
+        Some(v) => assemble_structured_judge(
+            v,
+            tokens_in,
+            tokens_out,
+            cost,
+            raw_response,
+            started_at,
+            completed_at,
+        ),
+        None => salvage_unstructured_judge(
+            &content,
+            tokens_in,
+            tokens_out,
+            cost,
+            raw_response,
+            started_at,
+            completed_at,
+        ),
+    })
 }
 
 // ---------------------------------------------------------------------------

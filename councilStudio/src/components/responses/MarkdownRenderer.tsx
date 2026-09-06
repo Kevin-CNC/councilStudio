@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/stores/appStore";
+import { confirmOpenExternal } from "@/lib/openExternal";
 import type { Citation, Table } from "@/types";
 
 const CodeBlock = lazy(() => import("./CodeBlock"));
@@ -171,17 +172,17 @@ function MarkdownChunk({
               </button>
             );
           }
-          // Normal link — http(s) only, never a raw/targetless anchor.
+          // Normal link — http(s) routed through the external-link warning
+          // dialog; non-http(s) hrefs stay inert.
           const safe = href && /^https?:\/\//i.test(href) ? href : undefined;
           return (
-            <a
-              href={safe}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary underline underline-offset-2"
+            <button
+              type="button"
+              onClick={safe ? () => confirmOpenExternal(safe) : undefined}
+              className="inline text-primary underline underline-offset-2"
             >
               {children}
-            </a>
+            </button>
           );
         },
       }}
