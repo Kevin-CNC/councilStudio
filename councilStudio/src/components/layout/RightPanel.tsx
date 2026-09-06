@@ -4,7 +4,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
-import { PanelRightClose, PanelRight, Variable, Activity } from "lucide-react";
+import { PanelRightClose, PanelRight, Activity } from "lucide-react";
+import { VarsIcon } from "@/components/icons/AppIcons";
 import { VarsTab } from "./VarsTab";
 import { MetricsTab } from "./MetricsTab";
 
@@ -56,7 +57,7 @@ export function RightPanel() {
               <div className="border-b border-border px-2 py-2">
                 <TabsList className="h-auto w-full flex-wrap gap-1 bg-transparent p-0">
                   <TabsTrigger value="vars" className="gap-1.5 text-xs px-2 py-1">
-                    <Variable className="h-3 w-3" /> Vars
+                    <VarsIcon className="h-3 w-3" /> Vars
                   </TabsTrigger>
                   <TabsTrigger value="metrics" className="gap-1.5 text-xs px-2 py-1">
                     <Activity className="h-3 w-3" /> Metrics
