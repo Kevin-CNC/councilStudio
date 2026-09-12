@@ -14,6 +14,7 @@ function App() {
   const loadCouncils = useAppStore((s) => s.loadCouncils);
   const loadSessions = useAppStore((s) => s.loadSessions);
   const loadPromptTemplates = useAppStore((s) => s.loadPromptTemplates);
+  const loadMcpServers = useAppStore((s) => s.loadMcpServers);
   const isBootstrapped = useAppStore((s) => s.isBootstrapped);
 
   useEffect(() => {
@@ -31,14 +32,14 @@ function App() {
             // DB already seeded or error — handled by store
           }
         }
-        await Promise.all([loadCouncils(), loadSessions(), loadPromptTemplates()]);
+        await Promise.all([loadCouncils(), loadSessions(), loadPromptTemplates(), loadMcpServers()]);
       } finally {
         // Always clear the boot loader, even if a startup load throws.
         useAppStore.setState({ isBootstrapped: true });
       }
     }
     init();
-  }, [loadMembers, loadCouncils, loadSessions, loadPromptTemplates]);
+  }, [loadMembers, loadCouncils, loadSessions, loadPromptTemplates, loadMcpServers]);
 
   // Tauri event listener lifecycle — register once, clean up on unmount.
   // StrictMode mounts → cleans up → remounts before the async listen() calls

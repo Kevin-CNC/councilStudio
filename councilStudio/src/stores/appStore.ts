@@ -15,6 +15,10 @@ import type {
   TemplateExportItem,
   SessionExportItem,
   PromptAttachment,
+  McpServer,
+  McpServerCreate,
+  McpServerUpdate,
+  McpTestResult,
 } from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
 import { toast } from "@/components/ui/toaster";
@@ -96,7 +100,7 @@ function storedRecord(key: string): Record<string, string> {
 }
 
 type TabId = "overview" | "responses" | "consensus" | "sources" | "timeline";
-type ViewId = "home" | "prompts" | "sessions" | "members";
+type ViewId = "home" | "prompts" | "sessions" | "members" | "integrations";
 
 /** Internal active run — personaResults stored as Record for O(1) streaming updates. */
 export type ActiveRun = Omit<CouncilRun, "personaResults"> & {
@@ -114,6 +118,8 @@ interface AppState {
   // Data
   members: Persona[];
   councils: Council[];
+  /** MCP integration servers (rows carry no secret material). */
+  mcpServers: McpServer[];
   /** Active council. Members run only when enabled AND in this council. */
   currentCouncilId: string | null;
   sessions: Session[];
@@ -201,6 +207,18 @@ interface AppState {
   importTemplates: (items: TemplateExportItem[]) => Promise<{ imported: number; errors: string[] }>;
   importSessions: (items: SessionExportItem[]) => Promise<{ imported: number; errors: string[] }>;
 
+  // Actions - MCP servers
+  loadMcpServers: () => Promise<void>;
+  addMcpServer: (payload: McpServerCreate) => Promise<McpServer>;
+  editMcpServer: (payload: McpServerUpdate) => Promise<McpServer>;
+  removeMcpServer: (id: string) => Promise<void>;
+  /** Probe a config without saving — drives the form's Test Connection button. */
+  probeMcpConnection: (config: McpServerCreate, mcpServerId?: string) => Promise<McpTestResult>;
+  /** Union-add a server to the given members. */
+  assignMcpToMembers: (serverId: string, memberIds: string[]) => Promise<void>;
+  /** Strip a server from every member that has it. */
+  removeMcpFromAll: (serverId: string) => Promise<void>;
+
   // Actions - Prompt
   setPrompt: (prompt: string) => void;
   addAttachments: (files: File[]) => Promise<void>;
@@ -259,6 +277,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Initial data — empty, loaded async from SQLite via Rust
   members: [],
   councils: [],
+  mcpServers: [],
   currentCouncilId: null,
   sessions: [],
   promptTemplates: [],
@@ -332,6 +351,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         streaming: data.streaming,
         color: data.color,
         reasoningLevel: data.reasoningLevel || "medium",
+        mcpServerIds: data.mcpServerIds ?? [],
       });
       set((state) => ({ members: [...state.members, created] }));
     } catch (e) {
@@ -354,6 +374,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         streaming: updates.streaming,
         color: updates.color,
         reasoningLevel: updates.reasoningLevel,
+        mcpServerIds: updates.mcpServerIds,
       });
       set((state) => ({
         members: state.members.map((m) => (m.id === id ? updated : m)),
@@ -661,6 +682,94 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
     return { imported, errors };
+  },
+
+  // --- MCP server actions (async, backed by SQLite via Tauri) ---
+
+  loadMcpServers: async () => {
+    try {
+      const mcpServers = await bridge.listMcpServers();
+      set({ mcpServers });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  addMcpServer: async (payload) => {
+    set({ error: null });
+    try {
+      const created = await bridge.createMcpServer(payload);
+      set((state) => ({ mcpServers: [created, ...state.mcpServers] }));
+      return created;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  editMcpServer: async (payload) => {
+    set({ error: null });
+    try {
+      const updated = await bridge.updateMcpServer(payload);
+      set((state) => ({
+        mcpServers: state.mcpServers.map((s) => (s.id === updated.id ? updated : s)),
+      }));
+      return updated;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  removeMcpServer: async (id) => {
+    set({ error: null });
+    try {
+      await bridge.deleteMcpServer(id);
+      // Backend strips the id from every member; mirror locally.
+      set((state) => ({
+        mcpServers: state.mcpServers.filter((s) => s.id !== id),
+        members: state.members.map((m) =>
+          m.mcpServerIds?.includes(id)
+            ? { ...m, mcpServerIds: m.mcpServerIds.filter((sid) => sid !== id) }
+            : m
+        ),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  probeMcpConnection: async (config, mcpServerId) => {
+    try {
+      return await bridge.testMcpConnection(config, mcpServerId);
+    } catch (e) {
+      return { ok: false, tools: [], error: String(e) };
+    }
+  },
+
+  assignMcpToMembers: async (serverId, memberIds) => {
+    if (memberIds.length === 0) return;
+    set({ error: null });
+    try {
+      const updated = await bridge.assignMcpServers(serverId, memberIds);
+      const byId = new Map(updated.map((m) => [m.id, m]));
+      set((state) => ({
+        members: state.members.map((m) => byId.get(m.id) ?? m),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  removeMcpFromAll: async (serverId) => {
+    const affected = get().members.filter((m) => m.mcpServerIds?.includes(serverId));
+    for (const m of affected) {
+      await get().updateMember(m.id, {
+        mcpServerIds: (m.mcpServerIds ?? []).filter((sid) => sid !== serverId),
+      });
+    }
   },
 
   // --- Prompt actions ---
@@ -1066,6 +1175,11 @@ async function setCouncilMemberIds(
 
 export const selectMembers = (s: AppState) => s.members;
 export const selectCouncils = (s: AppState) => s.councils;
+export const selectMcpServers = (s: AppState) => s.mcpServers;
+/** How many members an MCP server is assigned to — 0 renders the "unused" tag. */
+export function countMcpUsage(members: Persona[], serverId: string): number {
+  return members.filter((m) => m.mcpServerIds?.includes(serverId)).length;
+}
 export const selectCurrentCouncilId = (s: AppState) => s.currentCouncilId;
 export const selectCurrentCouncil = (s: AppState) =>
   s.councils.find((c) => c.id === s.currentCouncilId) ?? null;

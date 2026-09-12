@@ -16,6 +16,7 @@ import { Loader2 } from "lucide-react";
 const SessionsPage = lazy(() => import("@/pages/SessionsPage").then((m) => ({ default: m.SessionsPage })));
 const PromptsPage = lazy(() => import("@/pages/PromptsPage").then((m) => ({ default: m.PromptsPage })));
 const MembersPage = lazy(() => import("@/pages/MembersPage").then((m) => ({ default: m.MembersPage })));
+const IntegrationsPage = lazy(() => import("@/pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const ImportPreviewSheet = lazy(() => import("@/components/council/ImportPreviewSheet").then((m) => ({ default: m.ImportPreviewSheet })));
 
 function PageSkeleton() {
@@ -64,6 +65,10 @@ export function Dashboard() {
       ) : currentView === "members" ? (
         <Suspense fallback={<PageSkeleton />}>
           <MembersPage />
+        </Suspense>
+      ) : currentView === "integrations" ? (
+        <Suspense fallback={<PageSkeleton />}>
+          <IntegrationsPage />
         </Suspense>
       ) : (
         <div id="dashboard-root" className="flex h-full flex-col">

@@ -7,6 +7,7 @@
 //!   parses the structured JSON verdict.
 
 use crate::cmds::{Citation, Diagram, JudgeResult, PersonaResult, RunAttachment, Table};
+use crate::mcp::McpTool;
 use crate::pricing;
 use serde::{Deserialize, Serialize};
 
@@ -18,62 +19,40 @@ use serde::{Deserialize, Serialize};
 struct AnthropicRequest {
     model: String,
     system: String,
-    messages: Vec<Message>,
+    messages: Vec<serde_json::Value>,
     max_tokens: i64,
     temperature: f64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<serde_json::Value>,
 }
 
 #[derive(Serialize)]
 struct OpenAiRequest {
     // Same shape for OpenAI and OpenRouter
     model: String,
-    messages: Vec<Message>,
+    messages: Vec<serde_json::Value>,
     max_tokens: i64,
     temperature: f64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<String>,
 }
 
 #[derive(Serialize)]
 struct OllamaRequest {
     model: String,
-    messages: Vec<Message>,
+    messages: Vec<serde_json::Value>,
     stream: bool,
     options: OllamaOptions,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<serde_json::Value>,
 }
 
 #[derive(Serialize)]
 struct OllamaOptions {
     temperature: f64,
     num_predict: i64,
-}
-
-/// Message content: a plain string in the text-only path (byte-for-byte
-/// identical to the original wire format), or an array of provider-specific
-/// content blocks when image attachments are present.
-#[derive(Serialize, Clone)]
-#[serde(untagged)]
-enum UserMessageContent {
-    Text(String),
-    Blocks(Vec<serde_json::Value>),
-}
-
-#[derive(Serialize, Clone)]
-struct Message {
-    role: String,
-    content: UserMessageContent,
-    /// Ollama-only: bare base64 image data. Omitted entirely when empty, so
-    /// Anthropic/OpenAI/OpenRouter request bodies are unaffected.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    images: Vec<String>,
-}
-
-impl Message {
-    fn text(role: &str, content: &str) -> Self {
-        Message {
-            role: role.to_string(),
-            content: UserMessageContent::Text(content.to_string()),
-            images: Vec::new(),
-        }
-    }
 }
 
 /// Strip a "data:<mime>;base64,<data>" prefix if present, returning bare base64.
@@ -99,9 +78,21 @@ struct AnthropicResponse {
     usage: AnthropicUsage,
 }
 
+/// Anthropic content block: `text` blocks carry prose, `tool_use` blocks carry
+/// a call the model wants made.
 #[derive(Deserialize)]
-struct AnthropicContent {
-    text: String,
+#[serde(tag = "type")]
+enum AnthropicContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "tool_use")]
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Deserialize)]
@@ -127,7 +118,24 @@ struct OpenAiChoice {
 
 #[derive(Deserialize)]
 struct MessageContent {
-    content: String,
+    /// Null when the model only emitted tool calls.
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    tool_calls: Vec<OpenAiToolCall>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiToolCall {
+    id: String,
+    function: OpenAiToolCallFunction,
+}
+
+#[derive(Deserialize)]
+struct OpenAiToolCallFunction {
+    name: String,
+    /// JSON-encoded arguments string (OpenAI wire format).
+    arguments: String,
 }
 
 /// Deserialize an optional f64 from either a JSON number or numeric string.
@@ -169,7 +177,22 @@ struct OllamaResponse {
 
 #[derive(Deserialize)]
 struct OllamaMessage {
+    #[serde(default)]
     content: String,
+    #[serde(default)]
+    tool_calls: Vec<OllamaToolCall>,
+}
+
+#[derive(Deserialize)]
+struct OllamaToolCall {
+    function: OllamaToolCallFunction,
+}
+
+#[derive(Deserialize)]
+struct OllamaToolCallFunction {
+    name: String,
+    /// Ollama returns arguments as a JSON object (not a string).
+    arguments: serde_json::Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +215,57 @@ pub struct ChatRequest<'a> {
     /// Image attachments for this call. Empty by default — the request body
     /// is byte-for-byte identical to the text-only path when empty.
     pub attachments: &'a [RunAttachment],
+    /// MCP tools the model may call. Empty by default — the request body is
+    /// byte-for-byte identical to the no-tools path when empty.
+    pub tools: &'a [McpTool],
+}
+
+// ---------------------------------------------------------------------------
+// Multi-turn tool-call conversation types
+// ---------------------------------------------------------------------------
+
+/// One tool call the model requested in an assistant turn.
+#[derive(Debug, Clone)]
+pub struct ToolUseReq {
+    pub id: String,
+    pub name: String,
+    pub args: serde_json::Value,
+}
+
+/// A conversation message for the tool-call loop. The single-shot path
+/// (`chat_completion`) builds `[System, User]` exactly as before.
+#[derive(Debug, Clone)]
+pub enum ChatMsg {
+    System(String),
+    /// `include_attachments` marks the one user message that carries the run's
+    /// image attachments (the first user message in practice).
+    User {
+        text: String,
+        include_attachments: bool,
+    },
+    /// Assistant turn that asked for tools: its text (may be empty) and the
+    /// calls it wants made.
+    AssistantToolUse {
+        text: String,
+        calls: Vec<ToolUseReq>,
+    },
+    /// Result of one tool call, keyed by the call id.
+    ToolResult {
+        call_id: String,
+        name: String,
+        content: String,
+        is_error: bool,
+    },
+}
+
+/// One step of the tool-call loop: either final text (no tool calls) or a set
+/// of calls to execute before the next step.
+#[derive(Debug)]
+pub struct ToolStep {
+    pub text: String,
+    pub tool_calls: Vec<ToolUseReq>,
+    pub usage: pricing::Usage,
+    pub raw_response: String,
 }
 
 /// Make one chat completion call to any supported provider.
@@ -203,55 +277,22 @@ pub async fn chat_completion(
 ) -> Result<PersonaResult, String> {
     let started_at = now_millis();
 
-    let (content, usage, raw_response) = match req.provider {
-        "anthropic" => {
-            let key = req
-                .api_key
-                .ok_or("No Anthropic API key configured".to_string())?;
-            call_anthropic_wire(client, key, &req).await?
-        }
-        "openai" => {
-            let key = req
-                .api_key
-                .ok_or("No OpenAI API key configured".to_string())?;
-            call_openai_wire(
-                client,
-                key,
-                "https://api.openai.com/v1/chat/completions",
-                &req,
-            )
-            .await?
-        }
-        "openrouter" => {
-            let key = req
-                .api_key
-                .ok_or("No OpenRouter API key configured".to_string())?;
-            call_openai_wire(
-                client,
-                key,
-                "https://openrouter.ai/api/v1/chat/completions",
-                &req,
-            )
-            .await?
-        }
-        "ollama" => {
-            let url = req
-                .base_url
-                .unwrap_or("http://localhost:11434")
-                .trim_end_matches('/')
-                .to_string();
-            call_ollama_wire(client, &url, &req).await?
-        }
-        other => return Err(format!("Unknown provider: {other}")),
-    };
+    let messages = vec![
+        ChatMsg::System(req.system_prompt.to_string()),
+        ChatMsg::User {
+            text: req.user_prompt.to_string(),
+            include_attachments: true,
+        },
+    ];
+    let step = chat_step(client, &req, &messages).await?;
 
     let completed_at = now_millis();
-    let cost = pricing::resolve_cost(client, req.provider, req.model, &usage).await;
+    let cost = pricing::resolve_cost(client, req.provider, req.model, &step.usage).await;
 
     // Harness: strip the trailing ```references fence into typed citations and
     // ```table fences into typed tables, leaving mermaid fences and
     // `[{n}]`/`{{@Name}}`/`{{table:n}}` markers in the content.
-    let (content, citations, tables) = crate::harness::parse_persona_response(&content);
+    let (content, citations, tables) = crate::harness::parse_persona_response(&step.text);
 
     Ok(PersonaResult {
         persona_id: String::new(),   // filled by orchestrator
@@ -261,18 +302,72 @@ pub async fn chat_completion(
         status: "completed".to_string(),
         content,
         error: None,
-        tokens_in: usage.prompt_tokens,
-        tokens_out: usage.completion_tokens,
+        note: None,
+        tokens_in: step.usage.prompt_tokens,
+        tokens_out: step.usage.completion_tokens,
         latency_ms: completed_at - started_at,
         cost: cost.total,
         input_cost: cost.input_cost,
         output_cost: cost.output_cost,
         started_at,
         completed_at: Some(completed_at),
-        raw_response: Some(raw_response),
+        raw_response: Some(step.raw_response),
         citations, // persona_id filled by orchestrator
         tables,    // persona_id filled by orchestrator
     })
+}
+
+/// One step of the tool-call loop: send `messages` plus the request's tools to
+/// the provider, return the model's text and any tool calls it wants made.
+/// The caller appends results and calls again until `tool_calls` is empty.
+pub async fn chat_step(
+    client: &reqwest::Client,
+    req: &ChatRequest<'_>,
+    messages: &[ChatMsg],
+) -> Result<ToolStep, String> {
+    match req.provider {
+        "anthropic" => {
+            let key = req
+                .api_key
+                .ok_or("No Anthropic API key configured".to_string())?;
+            call_anthropic_wire(client, key, req, messages).await
+        }
+        "openai" => {
+            let key = req
+                .api_key
+                .ok_or("No OpenAI API key configured".to_string())?;
+            call_openai_wire(
+                client,
+                key,
+                "https://api.openai.com/v1/chat/completions",
+                req,
+                messages,
+            )
+            .await
+        }
+        "openrouter" => {
+            let key = req
+                .api_key
+                .ok_or("No OpenRouter API key configured".to_string())?;
+            call_openai_wire(
+                client,
+                key,
+                "https://openrouter.ai/api/v1/chat/completions",
+                req,
+                messages,
+            )
+            .await
+        }
+        "ollama" => {
+            let url = req
+                .base_url
+                .unwrap_or("http://localhost:11434")
+                .trim_end_matches('/')
+                .to_string();
+            call_ollama_wire(client, &url, req, messages).await
+        }
+        other => Err(format!("Unknown provider: {other}")),
+    }
 }
 
 const JUDGE_SYSTEM_PROMPT: &str = "You are a council judge. Your job is to synthesize multiple AI persona responses into a structured evaluation. Respond with ONLY a single JSON object. Begin with `{`, end with `}`. No markdown, no code fences, no prose. Minimal example: {\"summary\":\"…\",\"consensus\":[],\"disagreements\":[],\"minority_views\":[],\"recommendations\":[],\"confidence_score\":50,\"synthesis\":\"…\",\"diagrams\":[],\"citations\":[],\"tables\":[],\"missing_personas\":[]}. Always output valid JSON with the fields: summary, consensus, disagreements, minority_views, recommendations, confidence_score, synthesis, diagrams, citations, tables, missing_personas. Never omit a field. `diagrams` is an array of {\"id\",\"code\",\"caption\"} where `code` is raw mermaid source (no fences) — only include a diagram if one genuinely helps. `citations` is an array of {\"id\",\"source\",\"url\",\"excerpt\"} for external sources referenced in your text via [{n}] markers. `tables` is an array of {\"id\",\"caption\",\"columns\":[\"...\"],\"rows\":[[\"...\"]]} for structured comparison data (each row has one cell per column) — emit [] when nothing tabular helps. `missing_personas` is an array of the persona names that failed or produced no usable response. `summary` and `synthesis` are markdown and may contain ```mermaid fences, [{n}] citation markers and ```table fenced blocks (a ```table fence holds ONE JSON object {\"caption\",\"columns\",\"rows\"}). Never emit raw HTML.";
@@ -670,38 +765,135 @@ pub async fn judge_call(
 // Wire-level helpers (private — the public surface stays provider-independent)
 // ---------------------------------------------------------------------------
 
+/// Concatenated text of the conversation's system messages (one in practice).
+fn system_text(messages: &[ChatMsg]) -> String {
+    messages
+        .iter()
+        .filter_map(|m| match m {
+            ChatMsg::System(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Anthropic-flavored tool definitions.
+fn anthropic_tools(tools: &[McpTool]) -> Vec<serde_json::Value> {
+    tools
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+            })
+        })
+        .collect()
+}
+
+/// OpenAI/Ollama-flavored tool definitions (function wrapper).
+fn openai_tools(tools: &[McpTool]) -> Vec<serde_json::Value> {
+    tools
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.input_schema,
+                }
+            })
+        })
+        .collect()
+}
+
+/// Build Anthropic `messages`. Consecutive tool results merge into a single
+/// user message of `tool_result` blocks, as the API requires.
+fn anthropic_messages(req: &ChatRequest<'_>, messages: &[ChatMsg]) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    let mut pending_results: Vec<serde_json::Value> = Vec::new();
+
+    let flush = |out: &mut Vec<serde_json::Value>, pending: &mut Vec<serde_json::Value>| {
+        if !pending.is_empty() {
+            out.push(serde_json::json!({ "role": "user", "content": pending }));
+            pending.clear();
+        }
+    };
+
+    for msg in messages {
+        match msg {
+            ChatMsg::System(_) => {} // hoisted into the `system` field
+            ChatMsg::User {
+                text,
+                include_attachments,
+            } => {
+                flush(&mut out, &mut pending_results);
+                if *include_attachments && !req.attachments.is_empty() {
+                    let mut blocks = vec![serde_json::json!({ "type": "text", "text": text })];
+                    for a in req.attachments {
+                        blocks.push(serde_json::json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": a.mime_type,
+                                "data": bare_base64(&a.data_base64),
+                            }
+                        }));
+                    }
+                    out.push(serde_json::json!({ "role": "user", "content": blocks }));
+                } else {
+                    out.push(serde_json::json!({ "role": "user", "content": text }));
+                }
+            }
+            ChatMsg::AssistantToolUse { text, calls } => {
+                flush(&mut out, &mut pending_results);
+                let mut blocks = Vec::new();
+                if !text.is_empty() {
+                    blocks.push(serde_json::json!({ "type": "text", "text": text }));
+                }
+                for c in calls {
+                    blocks.push(serde_json::json!({
+                        "type": "tool_use",
+                        "id": c.id,
+                        "name": c.name,
+                        "input": c.args,
+                    }));
+                }
+                out.push(serde_json::json!({ "role": "assistant", "content": blocks }));
+            }
+            ChatMsg::ToolResult {
+                call_id,
+                content,
+                is_error,
+                ..
+            } => {
+                pending_results.push(serde_json::json!({
+                    "type": "tool_result",
+                    "tool_use_id": call_id,
+                    "content": content,
+                    "is_error": is_error,
+                }));
+            }
+        }
+    }
+    flush(&mut out, &mut pending_results);
+    out
+}
+
 async fn call_anthropic_wire(
     client: &reqwest::Client,
     api_key: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, pricing::Usage, String), String> {
-    let user_message = if req.attachments.is_empty() {
-        Message::text("user", req.user_prompt)
-    } else {
-        let mut blocks = vec![serde_json::json!({ "type": "text", "text": req.user_prompt })];
-        for a in req.attachments {
-            blocks.push(serde_json::json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": a.mime_type,
-                    "data": bare_base64(&a.data_base64),
-                }
-            }));
-        }
-        Message {
-            role: "user".to_string(),
-            content: UserMessageContent::Blocks(blocks),
-            images: Vec::new(),
-        }
-    };
-
+    messages: &[ChatMsg],
+) -> Result<ToolStep, String> {
     let body = AnthropicRequest {
         model: req.model.to_string(),
-        system: req.system_prompt.to_string(),
-        messages: vec![user_message],
+        system: system_text(messages),
+        messages: anthropic_messages(req, messages),
         max_tokens: req.max_tokens,
         temperature: req.temperature,
+        tools: anthropic_tools(req.tools),
     };
 
     let resp = client
@@ -726,22 +918,93 @@ async fn call_anthropic_wire(
         .map_err(|e| format!("Anthropic read body: {e}"))?;
     let data: AnthropicResponse =
         serde_json::from_str(&raw).map_err(|e| format!("Anthropic parse: {e}"))?;
-    let content = data
-        .content
-        .first()
-        .map(|c| c.text.clone())
-        .unwrap_or_default();
-    Ok((
-        content,
-        pricing::Usage {
+    let mut text_parts = Vec::new();
+    let mut calls = Vec::new();
+    for block in data.content {
+        match block {
+            AnthropicContent::Text { text } => text_parts.push(text),
+            AnthropicContent::ToolUse { id, name, input } => {
+                calls.push(ToolUseReq {
+                    id,
+                    name,
+                    args: input,
+                });
+            }
+            AnthropicContent::Other => {}
+        }
+    }
+    Ok(ToolStep {
+        text: text_parts.join(""),
+        tool_calls: calls,
+        usage: pricing::Usage {
             prompt_tokens: data.usage.input_tokens,
             completion_tokens: data.usage.output_tokens,
             cache_read_tokens: data.usage.cache_read_input_tokens,
             cache_write_tokens: data.usage.cache_creation_input_tokens,
             reported_cost: None,
         },
-        raw.trim().to_string(),
-    ))
+        raw_response: raw.trim().to_string(),
+    })
+}
+
+/// Build OpenAI/OpenRouter `messages`. System messages are inline (OpenAI
+/// style), tool results are standalone `tool` messages.
+fn openai_messages(req: &ChatRequest<'_>, messages: &[ChatMsg]) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for msg in messages {
+        match msg {
+            ChatMsg::System(text) => {
+                out.push(serde_json::json!({ "role": "system", "content": text }));
+            }
+            ChatMsg::User {
+                text,
+                include_attachments,
+            } => {
+                if *include_attachments && !req.attachments.is_empty() {
+                    let mut blocks = vec![serde_json::json!({ "type": "text", "text": text })];
+                    for a in req.attachments {
+                        blocks.push(serde_json::json!({
+                            "type": "image_url",
+                            "image_url": { "url": to_data_url(&a.mime_type, &a.data_base64) }
+                        }));
+                    }
+                    out.push(serde_json::json!({ "role": "user", "content": blocks }));
+                } else {
+                    out.push(serde_json::json!({ "role": "user", "content": text }));
+                }
+            }
+            ChatMsg::AssistantToolUse { text, calls } => {
+                let tool_calls: Vec<serde_json::Value> = calls
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "id": c.id,
+                            "type": "function",
+                            "function": {
+                                "name": c.name,
+                                "arguments": c.args.to_string(),
+                            }
+                        })
+                    })
+                    .collect();
+                out.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": if text.is_empty() { serde_json::Value::Null } else { serde_json::json!(text) },
+                    "tool_calls": tool_calls,
+                }));
+            }
+            ChatMsg::ToolResult {
+                call_id, content, ..
+            } => {
+                out.push(serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": content,
+                }));
+            }
+        }
+    }
+    out
 }
 
 async fn call_openai_wire(
@@ -749,29 +1012,20 @@ async fn call_openai_wire(
     api_key: &str,
     url: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, pricing::Usage, String), String> {
-    let user_message = if req.attachments.is_empty() {
-        Message::text("user", req.user_prompt)
-    } else {
-        let mut blocks = vec![serde_json::json!({ "type": "text", "text": req.user_prompt })];
-        for a in req.attachments {
-            blocks.push(serde_json::json!({
-                "type": "image_url",
-                "image_url": { "url": to_data_url(&a.mime_type, &a.data_base64) }
-            }));
-        }
-        Message {
-            role: "user".to_string(),
-            content: UserMessageContent::Blocks(blocks),
-            images: Vec::new(),
-        }
-    };
-
+    messages: &[ChatMsg],
+) -> Result<ToolStep, String> {
+    let tools = openai_tools(req.tools);
     let body = OpenAiRequest {
         model: req.model.to_string(),
-        messages: vec![Message::text("system", req.system_prompt), user_message],
+        messages: openai_messages(req, messages),
         max_tokens: req.max_tokens,
         temperature: req.temperature,
+        tool_choice: if tools.is_empty() {
+            None
+        } else {
+            Some("auto".to_string())
+        },
+        tools,
     };
 
     let resp = client
@@ -797,51 +1051,102 @@ async fn call_openai_wire(
         .map_err(|e| format!("{} read body: {e}", req.provider))?;
     let data: OpenAiResponse =
         serde_json::from_str(&raw).map_err(|e| format!("{} parse: {e}", req.provider))?;
-    let content = data
-        .choices
-        .first()
-        .map(|c| c.message.content.clone())
-        .unwrap_or_default();
-    Ok((
-        content,
-        pricing::Usage {
+    let (text, calls) = match data.choices.into_iter().next() {
+        Some(choice) => {
+            let calls = choice
+                .message
+                .tool_calls
+                .into_iter()
+                .map(|c| ToolUseReq {
+                    id: c.id,
+                    name: c.function.name,
+                    args: serde_json::from_str(&c.function.arguments)
+                        .unwrap_or(serde_json::Value::Object(Default::default())),
+                })
+                .collect();
+            (choice.message.content.unwrap_or_default(), calls)
+        }
+        None => (String::new(), Vec::new()),
+    };
+    Ok(ToolStep {
+        text,
+        tool_calls: calls,
+        usage: pricing::Usage {
             prompt_tokens: data.usage.prompt_tokens,
             completion_tokens: data.usage.completion_tokens,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             reported_cost: data.usage.cost,
         },
-        raw.trim().to_string(),
-    ))
+        raw_response: raw.trim().to_string(),
+    })
+}
+
+/// Build Ollama `messages`: like OpenAI but images ride as bare base64
+/// `images` arrays and tool calls/results carry no ids.
+fn ollama_messages(req: &ChatRequest<'_>, messages: &[ChatMsg]) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for msg in messages {
+        match msg {
+            ChatMsg::System(text) => {
+                out.push(serde_json::json!({ "role": "system", "content": text }));
+            }
+            ChatMsg::User {
+                text,
+                include_attachments,
+            } => {
+                let mut m = serde_json::json!({ "role": "user", "content": text });
+                if *include_attachments && !req.attachments.is_empty() {
+                    m["images"] = serde_json::json!(req
+                        .attachments
+                        .iter()
+                        .map(|a| bare_base64(&a.data_base64).to_string())
+                        .collect::<Vec<_>>());
+                }
+                out.push(m);
+            }
+            ChatMsg::AssistantToolUse { text, calls } => {
+                let tool_calls: Vec<serde_json::Value> = calls
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "function": { "name": c.name, "arguments": c.args }
+                        })
+                    })
+                    .collect();
+                out.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": text,
+                    "tool_calls": tool_calls,
+                }));
+            }
+            ChatMsg::ToolResult { name, content, .. } => {
+                out.push(serde_json::json!({
+                    "role": "tool",
+                    "name": name,
+                    "content": content,
+                }));
+            }
+        }
+    }
+    out
 }
 
 async fn call_ollama_wire(
     client: &reqwest::Client,
     base_url: &str,
     req: &ChatRequest<'_>,
-) -> Result<(String, pricing::Usage, String), String> {
-    let user_message = if req.attachments.is_empty() {
-        Message::text("user", req.user_prompt)
-    } else {
-        Message {
-            role: "user".to_string(),
-            content: UserMessageContent::Text(req.user_prompt.to_string()),
-            images: req
-                .attachments
-                .iter()
-                .map(|a| bare_base64(&a.data_base64).to_string())
-                .collect(),
-        }
-    };
-
+    messages: &[ChatMsg],
+) -> Result<ToolStep, String> {
     let body = OllamaRequest {
         model: req.model.to_string(),
-        messages: vec![Message::text("system", req.system_prompt), user_message],
+        messages: ollama_messages(req, messages),
         stream: false,
         options: OllamaOptions {
             temperature: req.temperature,
             num_predict: req.max_tokens,
         },
+        tools: openai_tools(req.tools),
     };
 
     let url = format!("{base_url}/api/chat");
@@ -865,17 +1170,31 @@ async fn call_ollama_wire(
         .map_err(|e| format!("Ollama read body: {e}"))?;
     let data: OllamaResponse =
         serde_json::from_str(&raw).map_err(|e| format!("Ollama parse: {e}"))?;
-    Ok((
-        data.message.content,
-        pricing::Usage {
+    // Ollama tool calls carry no ids — synthesize positional ones so results
+    // can be paired back.
+    let calls = data
+        .message
+        .tool_calls
+        .into_iter()
+        .enumerate()
+        .map(|(i, c)| ToolUseReq {
+            id: format!("call_{i}"),
+            name: c.function.name,
+            args: c.function.arguments,
+        })
+        .collect();
+    Ok(ToolStep {
+        text: data.message.content,
+        tool_calls: calls,
+        usage: pricing::Usage {
             prompt_tokens: data.prompt_eval_count.unwrap_or(0),
             completion_tokens: data.eval_count.unwrap_or(0),
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             reported_cost: None,
         },
-        raw.trim().to_string(),
-    ))
+        raw_response: raw.trim().to_string(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -897,4 +1216,244 @@ fn strip_code_fences(s: &str) -> &str {
         .unwrap_or(trimmed);
     let without_close = without_open.strip_suffix("```").unwrap_or(without_open);
     without_close.trim()
+}
+
+// ---------------------------------------------------------------------------
+// Tests — wire-shape coverage for the tool-call loop (no live providers).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool(name: &str) -> McpTool {
+        McpTool {
+            name: name.to_string(),
+            description: format!("{name} tool"),
+            input_schema: serde_json::json!({ "type": "object" }),
+        }
+    }
+
+    fn bare_req<'a>(tools: &'a [McpTool]) -> ChatRequest<'a> {
+        ChatRequest {
+            provider: "anthropic",
+            api_key: None,
+            base_url: None,
+            model: "m",
+            system_prompt: "sys",
+            user_prompt: "hi",
+            temperature: 0.7,
+            max_tokens: 100,
+            attachments: &[],
+            tools,
+        }
+    }
+
+    #[test]
+    fn empty_tools_omits_tools_field() {
+        // Regression guard: no tools → byte-identical no-tools wire body.
+        let req = bare_req(&[]);
+        let body = AnthropicRequest {
+            model: "m".to_string(),
+            system: "sys".to_string(),
+            messages: anthropic_messages(
+                &req,
+                &[ChatMsg::User {
+                    text: "hi".to_string(),
+                    include_attachments: false,
+                }],
+            ),
+            max_tokens: 100,
+            temperature: 0.7,
+            tools: anthropic_tools(req.tools),
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("tools"), "tools key leaked: {json}");
+
+        let body = OpenAiRequest {
+            model: "m".to_string(),
+            messages: vec![],
+            max_tokens: 100,
+            temperature: 0.7,
+            tools: vec![],
+            tool_choice: None,
+        };
+        let json = serde_json::to_string(&body).unwrap();
+        assert!(!json.contains("tools"));
+        assert!(!json.contains("tool_choice"));
+    }
+
+    #[test]
+    fn anthropic_tool_definitions_shape() {
+        let tools = anthropic_tools(&[tool("echo")]);
+        assert_eq!(tools[0]["name"], "echo");
+        assert_eq!(tools[0]["input_schema"]["type"], "object");
+        let openai = openai_tools(&[tool("echo")]);
+        assert_eq!(openai[0]["type"], "function");
+        assert_eq!(openai[0]["function"]["name"], "echo");
+        assert_eq!(openai[0]["function"]["parameters"]["type"], "object");
+    }
+
+    #[test]
+    fn anthropic_merges_consecutive_tool_results() {
+        let tools = [tool("echo")];
+        let req = bare_req(&tools);
+        let messages = vec![
+            ChatMsg::System("sys".to_string()),
+            ChatMsg::User {
+                text: "hi".to_string(),
+                include_attachments: false,
+            },
+            ChatMsg::AssistantToolUse {
+                text: "checking".to_string(),
+                calls: vec![
+                    ToolUseReq {
+                        id: "t1".to_string(),
+                        name: "echo".to_string(),
+                        args: serde_json::json!({}),
+                    },
+                    ToolUseReq {
+                        id: "t2".to_string(),
+                        name: "echo".to_string(),
+                        args: serde_json::json!({}),
+                    },
+                ],
+            },
+            ChatMsg::ToolResult {
+                call_id: "t1".to_string(),
+                name: "echo".to_string(),
+                content: "one".to_string(),
+                is_error: false,
+            },
+            ChatMsg::ToolResult {
+                call_id: "t2".to_string(),
+                name: "echo".to_string(),
+                content: "boom".to_string(),
+                is_error: true,
+            },
+        ];
+        let out = anthropic_messages(&req, &messages);
+        // user, assistant(tool_use x2), ONE merged user with 2 tool_results
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[1]["role"], "assistant");
+        assert_eq!(out[1]["content"][1]["type"], "tool_use");
+        assert_eq!(out[2]["role"], "user");
+        let results = out[2]["content"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["tool_use_id"], "t1");
+        assert_eq!(results[1]["is_error"], true);
+        // Assistant text block precedes tool_use blocks.
+        assert_eq!(out[1]["content"][0]["type"], "text");
+    }
+
+    #[test]
+    fn openai_tool_messages_shape() {
+        let tools = [tool("echo")];
+        let req = bare_req(&tools);
+        let messages = vec![
+            ChatMsg::System("sys".to_string()),
+            ChatMsg::User {
+                text: "hi".to_string(),
+                include_attachments: false,
+            },
+            ChatMsg::AssistantToolUse {
+                text: String::new(),
+                calls: vec![ToolUseReq {
+                    id: "call_0".to_string(),
+                    name: "echo".to_string(),
+                    args: serde_json::json!({ "a": 1 }),
+                }],
+            },
+            ChatMsg::ToolResult {
+                call_id: "call_0".to_string(),
+                name: "echo".to_string(),
+                content: "done".to_string(),
+                is_error: false,
+            },
+        ];
+        let out = openai_messages(&req, &messages);
+        assert_eq!(out[0]["role"], "system");
+        assert_eq!(out[2]["role"], "assistant");
+        assert_eq!(out[2]["tool_calls"][0]["function"]["name"], "echo");
+        assert_eq!(
+            out[2]["tool_calls"][0]["function"]["arguments"],
+            "{\"a\":1}"
+        );
+        assert!(out[2]["content"].is_null());
+        assert_eq!(out[3]["role"], "tool");
+        assert_eq!(out[3]["tool_call_id"], "call_0");
+    }
+
+    #[test]
+    fn ollama_tool_messages_shape() {
+        let tools = [tool("echo")];
+        let req = bare_req(&tools);
+        let messages = vec![
+            ChatMsg::AssistantToolUse {
+                text: "looking".to_string(),
+                calls: vec![ToolUseReq {
+                    id: "call_0".to_string(),
+                    name: "echo".to_string(),
+                    args: serde_json::json!({ "a": 1 }),
+                }],
+            },
+            ChatMsg::ToolResult {
+                call_id: "call_0".to_string(),
+                name: "echo".to_string(),
+                content: "done".to_string(),
+                is_error: false,
+            },
+        ];
+        let out = ollama_messages(&req, &messages);
+        assert_eq!(out[0]["tool_calls"][0]["function"]["arguments"]["a"], 1);
+        assert_eq!(out[1]["role"], "tool");
+        assert_eq!(out[1]["name"], "echo");
+    }
+
+    #[test]
+    fn anthropic_response_parses_tool_use_blocks() {
+        let raw = r#"{
+            "content": [
+                { "type": "text", "text": "Let me check." },
+                { "type": "tool_use", "id": "tu_1", "name": "echo",
+                  "input": { "text": "hi" } }
+            ],
+            "usage": { "input_tokens": 10, "output_tokens": 5 }
+        }"#;
+        let data: AnthropicResponse = serde_json::from_str(raw).unwrap();
+        let mut texts = Vec::new();
+        let mut calls = Vec::new();
+        for block in data.content {
+            match block {
+                AnthropicContent::Text { text } => texts.push(text),
+                AnthropicContent::ToolUse { id, name, input } => calls.push((id, name, input)),
+                AnthropicContent::Other => {}
+            }
+        }
+        assert_eq!(texts, vec!["Let me check."]);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "echo");
+        assert_eq!(calls[0].2["text"], "hi");
+    }
+
+    #[test]
+    fn openai_response_parses_tool_calls_with_null_content() {
+        let raw = r#"{
+            "choices": [{
+                "message": {
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "echo", "arguments": "{\"text\":\"hi\"}" }
+                    }]
+                }
+            }],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 2 }
+        }"#;
+        let data: OpenAiResponse = serde_json::from_str(raw).unwrap();
+        let msg = &data.choices[0].message;
+        assert!(msg.content.is_none());
+        assert_eq!(msg.tool_calls[0].function.name, "echo");
+    }
 }

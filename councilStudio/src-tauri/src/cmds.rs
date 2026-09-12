@@ -25,6 +25,9 @@ pub struct Persona {
     pub sort_order: i32,
     #[serde(rename = "reasoningLevel")]
     pub reasoning_level: String,
+    /// MCP servers assigned to this member (server ids). Empty by default.
+    #[serde(default)]
+    pub mcp_server_ids: Vec<String>,
 }
 
 /// Input for creating a new member. The backend assigns the id and a default sort_order.
@@ -46,6 +49,8 @@ pub struct PersonaCreate {
     #[serde(rename = "reasoningLevel")]
     pub reasoning_level: String,
     pub sort_order: Option<i32>,
+    #[serde(default)]
+    pub mcp_server_ids: Option<Vec<String>>,
 }
 
 /// Input for partially updating a member. `None` means leave the current value.
@@ -68,6 +73,8 @@ pub struct PersonaUpdate {
     pub sort_order: Option<i32>,
     #[serde(rename = "reasoningLevel")]
     pub reasoning_level: Option<String>,
+    #[serde(default)]
+    pub mcp_server_ids: Option<Vec<String>>,
 }
 
 /// A mermaid diagram a member or the judge wants rendered.
@@ -119,6 +126,9 @@ pub struct PersonaResult {
     pub status: String,
     pub content: String,
     pub error: Option<String>,
+    /// Non-fatal annotation (e.g. "MCP unreachable — ran without tools").
+    #[serde(default)]
+    pub note: Option<String>,
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub latency_ms: u64,
@@ -804,6 +814,7 @@ fn now_ms() -> i64 {
 // --- row mapping -----------------------------------------------------------
 
 fn persona_from_row(row: &rusqlite::Row) -> Result<Persona, rusqlite::Error> {
+    let mcp_server_ids_json: String = row.get("mcp_server_ids")?;
     Ok(Persona {
         id: row.get("id")?,
         name: row.get("agent_name")?,
@@ -817,13 +828,14 @@ fn persona_from_row(row: &rusqlite::Row) -> Result<Persona, rusqlite::Error> {
         color: row.get("agent_color")?,
         sort_order: row.get("registered_order")?,
         reasoning_level: row.get("reasoning")?,
+        mcp_server_ids: serde_json::from_str(&mcp_server_ids_json).unwrap_or_default(),
     })
 }
 
 fn get_persona(conn: &rusqlite::Connection, id: &str) -> Result<Persona, String> {
     conn.query_row(
         "SELECT id, agent_name, provider, model, sys_prompt, temp, max_tkns,
-                enabled, streaming, agent_color, registered_order, reasoning
+                enabled, streaming, agent_color, registered_order, reasoning, mcp_server_ids
          FROM agents
          WHERE id = ?1",
         [id],
@@ -836,7 +848,7 @@ fn list_personas(conn: &rusqlite::Connection) -> Result<Vec<Persona>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, agent_name, provider, model, sys_prompt, temp, max_tkns,
-                    enabled, streaming, agent_color, registered_order, reasoning
+                    enabled, streaming, agent_color, registered_order, reasoning, mcp_server_ids
              FROM agents
              ORDER BY registered_order ASC",
         )
@@ -964,6 +976,11 @@ fn validate_create(p: &PersonaCreate) -> Result<(), String> {
     if !(1..=200_000).contains(&p.max_tokens) {
         return Err("max_tokens must be between 1 and 200,000".to_string());
     }
+    if let Some(ids) = &p.mcp_server_ids {
+        for id in ids {
+            valid_uuid(id)?;
+        }
+    }
     Ok(())
 }
 
@@ -1008,6 +1025,11 @@ fn validate_update(u: &PersonaUpdate) -> Result<(), String> {
             return Err("max_tokens must be between 1 and 200,000".to_string());
         }
     }
+    if let Some(ids) = &u.mcp_server_ids {
+        for id in ids {
+            valid_uuid(id)?;
+        }
+    }
     Ok(())
 }
 
@@ -1038,8 +1060,8 @@ pub fn create_member(state: State<DbState>, payload: PersonaCreate) -> Result<Pe
     conn.execute(
         "INSERT INTO agents
             (id, agent_name, provider, model, sys_prompt, temp, max_tkns,
-             enabled, streaming, agent_color, registered_order, reasoning)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             enabled, streaming, agent_color, registered_order, reasoning, mcp_server_ids)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             id,
             payload.name,
@@ -1053,6 +1075,8 @@ pub fn create_member(state: State<DbState>, payload: PersonaCreate) -> Result<Pe
             payload.color,
             sort_order,
             payload.reasoning_level,
+            serde_json::to_string(&payload.mcp_server_ids.unwrap_or_default())
+                .map_err(|e| e.to_string())?,
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -1097,8 +1121,9 @@ pub fn update_member(
              streaming = COALESCE(?8, streaming),
              agent_color = COALESCE(?9, agent_color),
              registered_order = COALESCE(?10, registered_order),
-             reasoning = COALESCE(?11, reasoning)
-         WHERE id = ?12",
+             reasoning = COALESCE(?11, reasoning),
+             mcp_server_ids = COALESCE(?12, mcp_server_ids)
+         WHERE id = ?13",
             params![
                 request.updates.name,
                 request.updates.provider,
@@ -1111,6 +1136,13 @@ pub fn update_member(
                 request.updates.color,
                 request.updates.sort_order,
                 request.updates.reasoning_level,
+                request
+                    .updates
+                    .mcp_server_ids
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(|e| e.to_string())?,
                 request.id,
             ],
         )
@@ -1378,6 +1410,528 @@ pub async fn check_model_compatibility(
     request: crate::compatibility::CompatibilityCheckRequest,
 ) -> Result<crate::compatibility::CompatibilityCheckResult, String> {
     crate::compatibility::run_compatibility_check(request).await
+}
+
+// --- MCP integration servers ------------------------------------------------
+
+/// An MCP server row as the frontend sees it. Secret material (bearer token,
+/// env values) never appears here — `has_bearer` and `env_keys` are display
+/// metadata only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerRow {
+    pub id: String,
+    pub name: String,
+    pub transport: String, // "stdio" | "http"
+    pub command: String,
+    pub args: Vec<String>,
+    /// Env variable NAMES for stdio configs. Values live in the encrypted
+    /// secret store and are never returned.
+    pub env_keys: Vec<String>,
+    pub url: String,
+    /// Extra http headers (non-secret).
+    pub headers: std::collections::HashMap<String, String>,
+    /// Whether a bearer token is stored for this server.
+    pub has_bearer: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for `create_mcp_server`. `bearer_token` and `env` values are split
+/// off into the encrypted secret store before the row is written.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerCreate {
+    pub name: String,
+    pub transport: String,
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// stdio env entries — values are secrets.
+    #[serde(default)]
+    pub env: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub headers: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+}
+
+/// Input for `update_mcp_server` — `None` leaves the value. For secrets,
+/// `Some("")` clears the stored secret and `Some(v)` replaces it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerUpdate {
+    pub id: String,
+    pub name: Option<String>,
+    pub transport: Option<String>,
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub env: Option<std::collections::HashMap<String, String>>,
+    pub url: Option<String>,
+    pub headers: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub bearer_token: Option<String>,
+}
+
+/// Result of a `test_mcp_connection` probe: connect + list_tools.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpTestResult {
+    pub ok: bool,
+    pub tools: Vec<crate::mcp::McpTool>,
+    pub error: Option<String>,
+}
+
+/// Bulk-assign payload: add `mcp_server_id` to every member in `member_ids`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignMcpRequest {
+    pub mcp_server_id: String,
+    pub member_ids: Vec<String>,
+}
+
+fn valid_transport(transport: &str) -> Result<(), String> {
+    match transport {
+        "stdio" | "http" => Ok(()),
+        other => Err(format!(
+            "transport must be one of: stdio, http; got {other}"
+        )),
+    }
+}
+
+fn validate_mcp_fields(
+    name: &str,
+    transport: &str,
+    command: &str,
+    url: &str,
+) -> Result<(), String> {
+    if name.trim().is_empty() {
+        return Err("name is required".to_string());
+    }
+    if name.chars().count() > 100 {
+        return Err("name must be at most 100 characters".to_string());
+    }
+    valid_transport(transport)?;
+    match transport {
+        "stdio" if command.trim().is_empty() => {
+            return Err("command is required for stdio transport".to_string());
+        }
+        "http" => {
+            if url.trim().is_empty() {
+                return Err("url is required for http transport".to_string());
+            }
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err("url must start with http:// or https://".to_string());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn mcp_server_from_row(row: &rusqlite::Row) -> Result<McpServerRow, rusqlite::Error> {
+    let args_json: String = row.get("args_json")?;
+    let env_keys_json: String = row.get("env_keys_json")?;
+    let headers_json: String = row.get("headers_json")?;
+    Ok(McpServerRow {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        transport: row.get("transport")?,
+        command: row.get("command")?,
+        args: serde_json::from_str(&args_json).unwrap_or_default(),
+        env_keys: serde_json::from_str(&env_keys_json).unwrap_or_default(),
+        url: row.get("url")?,
+        headers: serde_json::from_str(&headers_json).unwrap_or_default(),
+        has_bearer: row.get("has_bearer")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+fn get_mcp_server(conn: &rusqlite::Connection, id: &str) -> Result<McpServerRow, String> {
+    conn.query_row(
+        "SELECT id, name, transport, command, args_json, env_keys_json, url,
+                headers_json, has_bearer, created_at, updated_at
+         FROM mcp_servers
+         WHERE id = ?1",
+        [id],
+        mcp_server_from_row,
+    )
+    .map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => "mcp server not found".to_string(),
+        e => e.to_string(),
+    })
+}
+
+/// Create an MCP server. Secrets are written to the encrypted store first; if
+/// the row insert fails the secrets are rolled back so nothing dangles.
+#[tauri::command]
+pub fn create_mcp_server(
+    state: State<DbState>,
+    app_handle: tauri::AppHandle,
+    payload: McpServerCreate,
+) -> Result<McpServerRow, String> {
+    validate_mcp_fields(
+        &payload.name,
+        &payload.transport,
+        &payload.command,
+        &payload.url,
+    )?;
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let id = Uuid::new_v4().to_string();
+
+    let bundle = crate::mcp_secrets::McpSecretBundle {
+        env: payload.env.clone(),
+        bearer_token: payload
+            .bearer_token
+            .as_ref()
+            .filter(|t| !t.trim().is_empty())
+            .cloned(),
+    };
+    crate::mcp_secrets::put_secrets(&app_data_dir, &id, bundle.clone())?;
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+    let now = now_ms();
+    let env_keys: Vec<String> = payload.env.keys().cloned().collect();
+
+    let insert = conn.execute(
+        "INSERT INTO mcp_servers
+            (id, name, transport, command, args_json, env_keys_json, url,
+             headers_json, has_bearer, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+        params![
+            id,
+            payload.name.trim(),
+            payload.transport,
+            payload.command,
+            serde_json::to_string(&payload.args).map_err(|e| e.to_string())?,
+            serde_json::to_string(&env_keys).map_err(|e| e.to_string())?,
+            payload.url,
+            serde_json::to_string(&payload.headers).map_err(|e| e.to_string())?,
+            bundle.bearer_token.is_some(),
+            now,
+        ],
+    );
+    if let Err(e) = insert {
+        let _ = crate::mcp_secrets::delete_secrets(&app_data_dir, &id);
+        return Err(e.to_string());
+    }
+
+    get_mcp_server(&conn, &id)
+}
+
+/// Return all MCP servers, newest first.
+#[tauri::command]
+pub fn list_mcp_servers(state: State<DbState>) -> Result<Vec<McpServerRow>, String> {
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, transport, command, args_json, env_keys_json, url,
+                    headers_json, has_bearer, created_at, updated_at
+             FROM mcp_servers
+             ORDER BY created_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], mcp_server_from_row)
+        .map_err(|e| e.to_string())?;
+    let mut servers = Vec::new();
+    for row in rows {
+        servers.push(row.map_err(|e| e.to_string())?);
+    }
+    Ok(servers)
+}
+
+/// Partially update an MCP server. Secret fields follow the member-update
+/// convention: `None` keeps, `Some("")` clears, `Some(v)` replaces.
+#[tauri::command]
+pub fn update_mcp_server(
+    state: State<DbState>,
+    app_handle: tauri::AppHandle,
+    payload: McpServerUpdate,
+) -> Result<McpServerRow, String> {
+    valid_uuid(&payload.id)?;
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+    let current = get_mcp_server(&conn, &payload.id)?;
+
+    let name = payload.name.clone().unwrap_or_else(|| current.name.clone());
+    let transport = payload
+        .transport
+        .clone()
+        .unwrap_or_else(|| current.transport.clone());
+    let command = payload
+        .command
+        .clone()
+        .unwrap_or_else(|| current.command.clone());
+    let url = payload.url.clone().unwrap_or_else(|| current.url.clone());
+    validate_mcp_fields(&name, &transport, &command, &url)?;
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    // Resolve secret updates against the stored bundle.
+    let mut bundle =
+        crate::mcp_secrets::get_secrets(&app_data_dir, &payload.id)?.unwrap_or_default();
+    if let Some(env) = &payload.env {
+        bundle.env = env.clone();
+    }
+    if let Some(token) = &payload.bearer_token {
+        bundle.bearer_token = if token.trim().is_empty() {
+            None
+        } else {
+            Some(token.clone())
+        };
+    }
+    crate::mcp_secrets::put_secrets(&app_data_dir, &payload.id, bundle.clone())?;
+
+    let env_keys: Vec<String> = match &payload.env {
+        Some(env) => env.keys().cloned().collect(),
+        None => current.env_keys.clone(),
+    };
+    let args = payload.args.clone().unwrap_or_else(|| current.args.clone());
+    let headers = payload
+        .headers
+        .clone()
+        .unwrap_or_else(|| current.headers.clone());
+    let now = now_ms();
+
+    conn.execute(
+        "UPDATE mcp_servers
+         SET name = ?1, transport = ?2, command = ?3, args_json = ?4,
+             env_keys_json = ?5, url = ?6, headers_json = ?7, has_bearer = ?8,
+             updated_at = ?9
+         WHERE id = ?10",
+        params![
+            name.trim(),
+            transport,
+            command,
+            serde_json::to_string(&args).map_err(|e| e.to_string())?,
+            serde_json::to_string(&env_keys).map_err(|e| e.to_string())?,
+            url,
+            serde_json::to_string(&headers).map_err(|e| e.to_string())?,
+            bundle.bearer_token.is_some(),
+            now,
+            payload.id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    get_mcp_server(&conn, &payload.id)
+}
+
+/// Delete an MCP server: row, encrypted secrets, and every member assignment.
+#[tauri::command]
+pub fn delete_mcp_server(
+    state: State<DbState>,
+    app_handle: tauri::AppHandle,
+    request: IdRequest,
+) -> Result<(), String> {
+    valid_uuid(&request.id)?;
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+    let changed = conn
+        .execute("DELETE FROM mcp_servers WHERE id = ?1", [&request.id])
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("mcp server not found".to_string());
+    }
+
+    crate::mcp_secrets::delete_secrets(&app_data_dir, &request.id)?;
+
+    // Strip the id from every member's assignment list so nothing dangles.
+    let affected: Vec<Persona> = list_personas(&conn)?
+        .into_iter()
+        .filter(|p| p.mcp_server_ids.contains(&request.id))
+        .collect();
+    for persona in affected {
+        let remaining: Vec<String> = persona
+            .mcp_server_ids
+            .into_iter()
+            .filter(|id| id != &request.id)
+            .collect();
+        conn.execute(
+            "UPDATE agents SET mcp_server_ids = ?1 WHERE id = ?2",
+            params![
+                serde_json::to_string(&remaining).map_err(|e| e.to_string())?,
+                persona.id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+/// Probe an MCP server config: connect + list tools. Nothing is persisted.
+/// `config` carries the same fields as `McpServerCreate`.
+#[tauri::command]
+pub async fn test_mcp_connection(
+    app_handle: tauri::AppHandle,
+    config: McpServerCreate,
+    #[allow(non_snake_case)] mcpServerId: Option<String>,
+) -> Result<McpTestResult, String> {
+    validate_mcp_fields(
+        &config.name,
+        &config.transport,
+        &config.command,
+        &config.url,
+    )?;
+
+    // For an existing server, a `None` bearer token / empty env means "use the
+    // stored secrets" — the edit form never echoes secrets back to the client.
+    let stored = match mcpServerId.as_deref() {
+        Some(id) => {
+            let app_data_dir = app_handle
+                .path()
+                .app_data_dir()
+                .map_err(|e| e.to_string())?;
+            crate::mcp_secrets::get_secrets(&app_data_dir, id)?.unwrap_or_default()
+        }
+        None => crate::mcp_secrets::McpSecretBundle::default(),
+    };
+    let env = if config.env.is_empty() {
+        stored.env
+    } else {
+        config.env.clone()
+    };
+    let bearer = config
+        .bearer_token
+        .clone()
+        .filter(|t| !t.trim().is_empty())
+        .or(stored.bearer_token);
+
+    let connect_config = crate::mcp::McpServerConfig {
+        transport: config.transport.clone(),
+        command: config.command.clone(),
+        args: config.args.clone(),
+        env: env.into_iter().collect(),
+        url: config.url.clone(),
+        headers: config.headers.clone().into_iter().collect(),
+    };
+
+    match crate::mcp::connect(&connect_config, bearer.as_deref()).await {
+        Ok(connector) => match connector.list_tools().await {
+            Ok(tools) => Ok(McpTestResult {
+                ok: true,
+                tools,
+                error: None,
+            }),
+            Err(e) => Ok(McpTestResult {
+                ok: false,
+                tools: vec![],
+                error: Some(e),
+            }),
+        },
+        Err(e) => Ok(McpTestResult {
+            ok: false,
+            tools: vec![],
+            error: Some(e),
+        }),
+    }
+}
+
+/// List a saved server's tools (fresh connect each call — cheap and always
+/// reflects what the server currently advertises).
+#[tauri::command]
+pub async fn list_mcp_tools(
+    state: State<'_, DbState>,
+    app_handle: tauri::AppHandle,
+    request: IdRequest,
+) -> Result<Vec<crate::mcp::McpTool>, String> {
+    valid_uuid(&request.id)?;
+
+    let row = {
+        let conn = state
+            .0
+            .lock()
+            .map_err(|_| "database lock poisoned".to_string())?;
+        get_mcp_server(&conn, &request.id)?
+    };
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+    let secrets = crate::mcp_secrets::get_secrets(&app_data_dir, &request.id)?.unwrap_or_default();
+
+    let config = crate::mcp::McpServerConfig {
+        transport: row.transport.clone(),
+        command: row.command.clone(),
+        args: row.args.clone(),
+        env: secrets.env.clone().into_iter().collect(),
+        url: row.url.clone(),
+        headers: row.headers.clone().into_iter().collect(),
+    };
+    let connector = crate::mcp::connect(&config, secrets.bearer_token.as_deref()).await?;
+    connector.list_tools().await
+}
+
+/// Bulk-assign an MCP server to members: union-add the server id to each
+/// member's `mcp_server_ids`. Removal rides the per-member `update_member`.
+#[tauri::command]
+pub fn assign_mcp_servers(
+    state: State<DbState>,
+    request: AssignMcpRequest,
+) -> Result<Vec<Persona>, String> {
+    valid_uuid(&request.mcp_server_id)?;
+    for id in &request.member_ids {
+        valid_uuid(id)?;
+    }
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| "database lock poisoned".to_string())?;
+
+    // The server must exist.
+    get_mcp_server(&conn, &request.mcp_server_id)?;
+
+    let mut updated = Vec::new();
+    for member_id in &request.member_ids {
+        let mut persona = get_persona(&conn, member_id)?;
+        if persona.mcp_server_ids.contains(&request.mcp_server_id) {
+            updated.push(persona);
+            continue;
+        }
+        persona.mcp_server_ids.push(request.mcp_server_id.clone());
+        conn.execute(
+            "UPDATE agents SET mcp_server_ids = ?1 WHERE id = ?2",
+            params![
+                serde_json::to_string(&persona.mcp_server_ids).map_err(|e| e.to_string())?,
+                persona.id
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        updated.push(persona);
+    }
+    Ok(updated)
 }
 
 /// Return which providers have API keys configured.

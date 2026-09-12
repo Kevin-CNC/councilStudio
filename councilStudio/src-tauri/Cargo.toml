@@ -26,3 +26,13 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
+rmcp = { version = "3.3.0", default-features = false, features = [
+    "client",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+    "reqwest-native-tls",
+] }
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.22"
+async-trait = "0.1"

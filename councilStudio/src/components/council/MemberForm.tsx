@@ -94,13 +94,14 @@ const AVATAR_COLORS = [
 ];
 
 export function MemberForm() {
-  const { memberFormOpen, editingMemberId, setMemberFormOpen, members, addMember, updateMember } =
+  const { memberFormOpen, editingMemberId, setMemberFormOpen, members, mcpServers, addMember, updateMember } =
     useAppStore(
       useShallow((s) => ({
         memberFormOpen: s.memberFormOpen,
         editingMemberId: s.editingMemberId,
         setMemberFormOpen: s.setMemberFormOpen,
         members: s.members,
+        mcpServers: s.mcpServers,
         addMember: s.addMember,
         updateMember: s.updateMember,
       }))
@@ -118,6 +119,7 @@ export function MemberForm() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [streaming, setStreaming] = useState(true);
   const [color, setColor] = useState(AVATAR_COLORS[0]);
+  const [mcpServerIds, setMcpServerIds] = useState<string[]>([]);
 
   const [confirming, setConfirming] = useState(false);
   const [confirmBlocked, setConfirmBlocked] = useState(false);
@@ -144,6 +146,7 @@ export function MemberForm() {
       setSystemPrompt(editingMember.systemPrompt);
       setStreaming(editingMember.streaming);
       setColor(editingMember.color);
+      setMcpServerIds(editingMember.mcpServerIds ?? []);
     } else {
       setName("");
       setProvider("anthropic");
@@ -154,6 +157,7 @@ export function MemberForm() {
       setSystemPrompt("");
       setStreaming(true);
       setColor(AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]);
+      setMcpServerIds([]);
     }
     setConfirming(false);
     setConfirmBlocked(false);
@@ -215,6 +219,7 @@ export function MemberForm() {
           systemPrompt,
           streaming,
           color,
+          mcpServerIds,
         });
       } else {
         await addMember({
@@ -228,6 +233,7 @@ export function MemberForm() {
           color,
           reasoningLevel,
           enabled: true,
+          mcpServerIds,
         });
       }
       setMemberFormOpen(false);
@@ -404,6 +410,44 @@ export function MemberForm() {
                 ))}
               </div>
             </div>
+
+            {/* MCP integrations — only shown when servers exist */}
+            {mcpServers.length > 0 && (
+              <div className="space-y-2">
+                <Label>MCP Servers</Label>
+                <p className="text-xs text-muted-foreground">
+                  Tools from selected servers are available to this member during runs.
+                </p>
+                <div className="space-y-1.5">
+                  {mcpServers.map((server) => {
+                    const checked = mcpServerIds.includes(server.id);
+                    return (
+                      <label
+                        key={server.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-muted"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() =>
+                            setMcpServerIds((prev) =>
+                              checked
+                                ? prev.filter((id) => id !== server.id)
+                                : [...prev, server.id]
+                            )
+                          }
+                          className="h-4 w-4 accent-primary"
+                        />
+                        <span className="flex-1 truncate">{server.name}</span>
+                        <span className="text-[10px] uppercase text-muted-foreground">
+                          {server.transport}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Toggles */}
             <div className="space-y-3">

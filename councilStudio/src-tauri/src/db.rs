@@ -102,5 +102,34 @@ pub fn init_db(app_handle: &tauri::AppHandle) -> Result<Connection, String> {
     )
     .map_err(|e| format!("create table: {e}"))?;
 
+    // MCP integration servers. Secrets (bearer token, env values) never live
+    // here — they go through the encrypted `mcp_secrets` store; `env_keys` and
+    // `has_bearer` are display metadata only.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS mcp_servers (
+            id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL,
+            transport TEXT NOT NULL,
+            command TEXT NOT NULL DEFAULT '',
+            args_json TEXT NOT NULL DEFAULT '[]',
+            env_keys_json TEXT NOT NULL DEFAULT '[]',
+            url TEXT NOT NULL DEFAULT '',
+            headers_json TEXT NOT NULL DEFAULT '{}',
+            has_bearer INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        (),
+    )
+    .map_err(|e| format!("create table: {e}"))?;
+
+    // Members hold the MCP servers assigned to them as a JSON array of server
+    // ids. Additive column, guarded like the other ALTERs above.
+    conn.execute(
+        "ALTER TABLE agents ADD COLUMN mcp_server_ids TEXT NOT NULL DEFAULT '[]'",
+        (),
+    )
+    .ok();
+
     Ok(conn)
 }

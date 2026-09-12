@@ -31,6 +31,77 @@ export interface Persona {
   tools?: string[];
   knowledgeSources?: string[];
   reasoningLevel?: "none" | "low" | "medium" | "high";
+  /** MCP integration servers assigned to this member (server ids). */
+  mcpServerIds?: string[];
+}
+
+// --- MCP integration servers ---
+
+export type McpTransport = "stdio" | "http";
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+}
+
+/** Live status of a probed MCP server connection. */
+export interface McpStatus {
+  connected: boolean;
+  toolCount?: number;
+  lastUsedMs?: number;
+}
+
+/**
+ * An MCP server row as the backend returns it. Secret material (bearer token,
+ * env values) never appears here — `hasBearer`/`envKeys` are display metadata.
+ */
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: McpTransport;
+  command: string;
+  args: string[];
+  envKeys: string[];
+  url: string;
+  headers: Record<string, string>;
+  hasBearer: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Create payload. `env` values and `bearerToken` go to the encrypted store. */
+export interface McpServerCreate {
+  name: string;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  bearerToken?: string;
+}
+
+/**
+ * Update payload — absent fields keep their value. For secrets: empty string
+ * clears the stored secret, a value replaces it, absent keeps it.
+ */
+export interface McpServerUpdate {
+  id: string;
+  name?: string;
+  transport?: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  bearerToken?: string;
+}
+
+export interface McpTestResult {
+  ok: boolean;
+  tools: McpTool[];
+  error?: string;
 }
 
 export interface ProviderCredential {
@@ -274,6 +345,7 @@ export interface PersonaCreate {
   streaming: boolean;
   color: string;
   reasoningLevel: "none" | "low" | "medium" | "high";
+  mcpServerIds?: string[];
 }
 
 // Payload for partially updating an existing member
@@ -288,6 +360,7 @@ export interface PersonaUpdate {
   streaming?: boolean;
   color?: string;
   reasoningLevel?: "none" | "low" | "medium" | "high";
+  mcpServerIds?: string[];
 }
 
 // Model metadata for dropdowns
