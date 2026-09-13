@@ -74,12 +74,66 @@ function toKeyValueLines(rec: Record<string, string>): string {
     .join("\n");
 }
 
-/** Parse a one-per-line textarea into trimmed non-empty lines. */
-function parseLines(text: string): string[] {
-  return text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
+// --- Row-table machinery (args + env) ---------------------------------------
+
+type ArgType = "flag" | "option" | "positional";
+type EnvType = "plain" | "secret";
+type AnyRow<RowType extends string> = { id: string; name: string; value: string; type: RowType };
+type ArgRow = AnyRow<ArgType>;
+type EnvRow = AnyRow<EnvType>;
+
+const ARG_TYPES: { id: ArgType; label: string }[] = [
+  { id: "flag", label: "flag" },
+  { id: "option", label: "option" },
+  { id: "positional", label: "positional" },
+];
+const ENV_TYPES: { id: EnvType; label: string }[] = [
+  { id: "plain", label: "plain" },
+  { id: "secret", label: "secret" },
+];
+
+function newRow<RowType extends string>(type: RowType): AnyRow<RowType> {
+  return { id: crypto.randomUUID(), name: "", value: "", type };
+}
+
+/**
+ * Flatten CLI args back into rows (edit form). Leading-dash entries bind with
+ * the next bare value as an `option` pair; bare values are `positional`.
+ */
+function argsToRows(args: string[]): ArgRow[] {
+  const rows: ArgRow[] = [];
+  let i = 0;
+  while (i < args.length) {
+    const a = args[i];
+    if (a.startsWith("-")) {
+      const next = args[i + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        rows.push({ ...newRow<ArgType>("option"), name: a, value: next });
+        i += 2;
+      } else {
+        rows.push({ ...newRow<ArgType>("flag"), name: a });
+        i += 1;
+      }
+    } else {
+      rows.push({ ...newRow<ArgType>("positional"), value: a });
+      i += 1;
+    }
+  }
+  return rows;
+}
+
+/** Serialize arg rows back to the CLI arg array the backend stores. */
+function rowsToArgs(rows: ArgRow[]): string[] {
+  return rows.flatMap((r) => {
+    const name = r.name.trim();
+    const value = r.value.trim();
+    if (r.type === "flag") return name ? [name] : [];
+    if (r.type === "option") {
+      if (!name) return [];
+      return value ? [name, value] : [name];
+    }
+    return value ? [value] : [];
+  });
 }
 
 export function IntegrationsPage() {
@@ -440,15 +494,15 @@ function McpServerSheet({
   const [name, setName] = useState("");
   const [transport, setTransport] = useState<McpTransport>("stdio");
   const [command, setCommand] = useState("");
-  const [argsText, setArgsText] = useState("");
-  const [envText, setEnvText] = useState("");
+  const [argRows, setArgRows] = useState<ArgRow[]>([]);
+  const [envRows, setEnvRows] = useState<EnvRow[]>([]);
   const [url, setUrl] = useState("");
   const [headersText, setHeadersText] = useState("");
   const [bearerToken, setBearerToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  /** Env text as loaded when editing started — unchanged means "keep secrets". */
-  const [initialEnvText, setInitialEnvText] = useState("");
+  /** Env key names as loaded when editing started — drives delete detection. */
+  const [initialEnvKeys, setInitialEnvKeys] = useState<string[]>([]);
 
   useEffect(() => {
     if (!open) return;
@@ -456,11 +510,13 @@ function McpServerSheet({
       setName(editing.name);
       setTransport(editing.transport);
       setCommand(editing.command);
-      setArgsText(editing.args.join("\n"));
-      // Env values are secrets and never echoed — key names as placeholders.
-      const loadedEnv = editing.envKeys.map((k) => `${k}=`).join("\n");
-      setEnvText(loadedEnv);
-      setInitialEnvText(loadedEnv);
+      setArgRows(argsToRows(editing.args));
+      // Env values are secrets and never echoed — rows show blank values,
+      // meaning "keep stored".
+      setEnvRows(
+        editing.envKeys.map((k) => ({ ...newRow<EnvType>("plain"), name: k }))
+      );
+      setInitialEnvKeys(editing.envKeys);
       setUrl(editing.url);
       setHeadersText(toKeyValueLines(editing.headers));
       setBearerToken("");
@@ -468,9 +524,9 @@ function McpServerSheet({
       setName("");
       setTransport("stdio");
       setCommand("");
-      setArgsText("");
-      setEnvText("");
-      setInitialEnvText("");
+      setArgRows([]);
+      setEnvRows([]);
+      setInitialEnvKeys([]);
       setUrl("");
       setHeadersText("");
       setBearerToken("");
@@ -479,30 +535,39 @@ function McpServerSheet({
   }, [editing, open]);
 
   const buildConfig = useCallback((): McpServerCreate => {
-    // Editing with untouched env text → omit the field entirely so the backend
-    // keeps the stored secrets. A touched textarea sends the parsed map
-    // wholesale (blank `KEY=` lines dropped; deleting all lines clears env).
-    const envUntouched = isEditing && envText === initialEnvText;
-    let env: Record<string, string> | undefined;
-    if (!envUntouched) {
-      env = parseKeyValueLines(envText);
-      if (isEditing) {
-        for (const [k, v] of Object.entries(env)) {
-          if (v === "") delete env[k];
-        }
+    // Env payload — backend merges per key: non-empty sets, empty deletes,
+    // absent keeps. Existing keys with a blank value are omitted (= keep);
+    // keys dropped from the table are sent empty (= delete).
+    const env: Record<string, string> = {};
+    if (isEditing) {
+      const currentKeys = new Set(envRows.map((r) => r.name.trim()).filter(Boolean));
+      for (const r of envRows) {
+        const k = r.name.trim();
+        const v = r.value.trim();
+        if (!k || v === "") continue;
+        env[k] = r.value;
+      }
+      for (const k of initialEnvKeys) {
+        if (!currentKeys.has(k)) env[k] = "";
+      }
+    } else {
+      for (const r of envRows) {
+        const k = r.name.trim();
+        if (!k) continue;
+        env[k] = r.value;
       }
     }
     return {
       name: name.trim(),
       transport,
       command: command.trim(),
-      args: parseLines(argsText),
+      args: rowsToArgs(argRows),
       env,
       url: url.trim(),
       headers: parseKeyValueLines(headersText),
       bearerToken: bearerToken.trim() || undefined,
     };
-  }, [name, transport, command, argsText, envText, initialEnvText, url, headersText, bearerToken, isEditing]);
+  }, [name, transport, command, argRows, envRows, initialEnvKeys, url, headersText, bearerToken, isEditing]);
 
   const formValid =
     name.trim().length > 0 &&
@@ -593,27 +658,33 @@ function McpServerSheet({
                 {/* Args */}
                 <div className="space-y-2">
                   <Label>Arguments</Label>
-                  <Textarea
-                    placeholder={"One argument per line, e.g.\n-y\n@modelcontextprotocol/server-everything"}
-                    value={argsText}
-                    onChange={(e) => setArgsText(e.target.value)}
-                    className="min-h-[80px] resize-none font-mono text-xs"
+                  <TrioTable<ArgType>
+                    rows={argRows}
+                    onChange={setArgRows}
+                    typeOptions={ARG_TYPES}
+                    namePlaceholder="-y, --port"
+                    valuePlaceholder="value"
+                    nameDisabled={(row) => row.type === "positional"}
+                    valueDisabled={(row) => row.type === "flag"}
                   />
                 </div>
 
                 {/* Env */}
                 <div className="space-y-2">
                   <Label>Environment Variables</Label>
-                  <Textarea
-                    placeholder={"KEY=VALUE per line. Values are stored encrypted."}
-                    value={envText}
-                    onChange={(e) => setEnvText(e.target.value)}
-                    className="min-h-[80px] resize-none font-mono text-xs"
+                  <TrioTable<EnvType>
+                    rows={envRows}
+                    onChange={setEnvRows}
+                    typeOptions={ENV_TYPES}
+                    namePlaceholder="KEY"
+                    valuePlaceholder="stored encrypted"
+                    maskValue={(row) => row.type === "secret"}
                   />
                   {isEditing && (
                     <p className="text-xs text-muted-foreground">
-                      Existing keys shown with blank values — leave blank to keep the
-                      stored secret, or type a new value to replace it.
+                      Existing keys show a blank value — leave blank to keep the
+                      stored secret, type a value to replace it, or delete the
+                      row to remove the key.
                     </p>
                   )}
                 </div>
@@ -705,5 +776,103 @@ function McpServerSheet({
         </SheetFooter>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Row table — name / value / type rows for args and environment variables.
+// ---------------------------------------------------------------------------
+
+function TrioTable<RowType extends string>({
+  rows,
+  onChange,
+  typeOptions,
+  namePlaceholder,
+  valuePlaceholder,
+  nameDisabled,
+  valueDisabled,
+  maskValue,
+}: {
+  rows: AnyRow<RowType>[];
+  onChange: (rows: AnyRow<RowType>[]) => void;
+  typeOptions: { id: RowType; label: string }[];
+  namePlaceholder: string;
+  valuePlaceholder: string;
+  /** Row-dependent input lock (e.g. positional args have no name). */
+  nameDisabled?: (row: AnyRow<RowType>) => boolean;
+  valueDisabled?: (row: AnyRow<RowType>) => boolean;
+  /** Row-dependent value masking (env type "secret"). */
+  maskValue?: (row: AnyRow<RowType>) => boolean;
+}) {
+  const patchRow = (id: string, patch: Partial<AnyRow<RowType>>) =>
+    onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  return (
+    <div className="space-y-1.5">
+      {rows.length > 0 && (
+        <div className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-1.5 text-[10px] uppercase text-muted-foreground">
+          <span>name</span>
+          <span>value</span>
+          <span>type</span>
+          <span />
+        </div>
+      )}
+      {rows.map((row) => (
+        <div
+          key={row.id}
+          className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-1.5"
+        >
+          <Input
+            placeholder={nameDisabled?.(row) ? "—" : namePlaceholder}
+            value={row.name}
+            disabled={nameDisabled?.(row)}
+            onChange={(e) => patchRow(row.id, { name: e.target.value })}
+            className="h-8 font-mono text-xs"
+          />
+          <Input
+            type={maskValue?.(row) ? "password" : "text"}
+            placeholder={valueDisabled?.(row) ? "—" : valuePlaceholder}
+            value={row.value}
+            disabled={valueDisabled?.(row)}
+            onChange={(e) => patchRow(row.id, { value: e.target.value })}
+            className="h-8 font-mono text-xs"
+          />
+          <Select
+            value={row.type}
+            onValueChange={(v) => patchRow(row.id, { type: v as RowType })}
+          >
+            <SelectTrigger className="h-8 w-[110px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {typeOptions.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+            onClick={() => onChange(rows.filter((r) => r.id !== row.id))}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      ))}
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1 text-xs"
+        onClick={() =>
+          onChange([...rows, newRow<RowType>(rows[0]?.type ?? typeOptions[0].id)])
+        }
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add row
+      </Button>
+    </div>
   );
 }

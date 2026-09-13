@@ -1459,8 +1459,10 @@ pub struct McpServerCreate {
     pub bearer_token: Option<String>,
 }
 
-/// Input for `update_mcp_server` — `None` leaves the value. For secrets,
-/// `Some("")` clears the stored secret and `Some(v)` replaces it.
+/// Input for `update_mcp_server` — `None` leaves the value. For the bearer
+/// token, `Some("")` clears the stored secret and `Some(v)` replaces it.
+/// Env merges per key: non-empty value sets, empty value deletes, absent
+/// key keeps its stored value.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerUpdate {
@@ -1655,8 +1657,9 @@ pub fn list_mcp_servers(state: State<DbState>) -> Result<Vec<McpServerRow>, Stri
     Ok(servers)
 }
 
-/// Partially update an MCP server. Secret fields follow the member-update
-/// convention: `None` keeps, `Some("")` clears, `Some(v)` replaces.
+/// Partially update an MCP server. Fields follow the member-update convention:
+/// `None` keeps. For secrets, bearer `Some("")` clears / `Some(v)` replaces.
+/// Env entries merge per key: non-empty sets, empty deletes, absent keeps.
 #[tauri::command]
 pub fn update_mcp_server(
     state: State<DbState>,
@@ -1688,11 +1691,19 @@ pub fn update_mcp_server(
         .app_data_dir()
         .map_err(|e| e.to_string())?;
 
-    // Resolve secret updates against the stored bundle.
+    // Resolve secret updates against the stored bundle. Env merges per key so
+    // the edit form can send only touched rows; absent keys keep their stored
+    // values.
     let mut bundle =
         crate::mcp_secrets::get_secrets(&app_data_dir, &payload.id)?.unwrap_or_default();
     if let Some(env) = &payload.env {
-        bundle.env = env.clone();
+        for (k, v) in env {
+            if v.is_empty() {
+                bundle.env.remove(k);
+            } else {
+                bundle.env.insert(k.clone(), v.clone());
+            }
+        }
     }
     if let Some(token) = &payload.bearer_token {
         bundle.bearer_token = if token.trim().is_empty() {
@@ -1703,10 +1714,7 @@ pub fn update_mcp_server(
     }
     crate::mcp_secrets::put_secrets(&app_data_dir, &payload.id, bundle.clone())?;
 
-    let env_keys: Vec<String> = match &payload.env {
-        Some(env) => env.keys().cloned().collect(),
-        None => current.env_keys.clone(),
-    };
+    let env_keys: Vec<String> = bundle.env.keys().cloned().collect();
     let args = payload.args.clone().unwrap_or_else(|| current.args.clone());
     let headers = payload
         .headers
@@ -1804,8 +1812,10 @@ pub async fn test_mcp_connection(
         &config.url,
     )?;
 
-    // For an existing server, a `None` bearer token / empty env means "use the
-    // stored secrets" — the edit form never echoes secrets back to the client.
+    // For an existing server, a `None` bearer token means "use the stored
+    // secret". Env entries merge over the stored ones (non-empty sets, empty
+    // deletes) — the edit form sends only touched rows and never echoes
+    // secrets back to the client.
     let stored = match mcpServerId.as_deref() {
         Some(id) => {
             let app_data_dir = app_handle
@@ -1816,11 +1826,14 @@ pub async fn test_mcp_connection(
         }
         None => crate::mcp_secrets::McpSecretBundle::default(),
     };
-    let env = if config.env.is_empty() {
-        stored.env
-    } else {
-        config.env.clone()
-    };
+    let mut env = stored.env;
+    for (k, v) in &config.env {
+        if v.is_empty() {
+            env.remove(k);
+        } else {
+            env.insert(k.clone(), v.clone());
+        }
+    }
     let bearer = config
         .bearer_token
         .clone()
