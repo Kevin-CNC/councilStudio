@@ -77,10 +77,45 @@ pub struct PersonaUpdate {
     pub mcp_server_ids: Option<Vec<String>>,
 }
 
+/// serde helper: judge models ignore the "string" contract and emit bare
+/// numbers/bools for ids and table cells — coerce instead of failing the
+/// whole verdict parse.
+pub(crate) fn coerce_string<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v: serde_json::Value = serde::Deserialize::deserialize(d)?;
+    Ok(coerce_value_to_string(v))
+}
+
+/// serde helper: a table's rows — each row's cells coerced to strings
+/// individually.
+pub(crate) fn coerce_row<'de, D>(d: D) -> Result<Vec<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let rows: Vec<Vec<serde_json::Value>> = serde::Deserialize::deserialize(d)?;
+    Ok(rows
+        .into_iter()
+        .map(|row| row.into_iter().map(coerce_value_to_string).collect())
+        .collect())
+}
+
+fn coerce_value_to_string(v: serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s,
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 /// A mermaid diagram a member or the judge wants rendered.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Diagram {
+    #[serde(deserialize_with = "coerce_string")]
     pub id: String,
     /// Raw mermaid source (no fences).
     pub code: String,
@@ -94,11 +129,15 @@ pub struct Diagram {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Table {
+    #[serde(deserialize_with = "coerce_string")]
     pub id: String,
     #[serde(default)]
     pub caption: Option<String>,
     pub columns: Vec<String>,
+    #[serde(deserialize_with = "coerce_row")]
     pub rows: Vec<Vec<String>>,
+    /// Judge JSON never carries this — backend fills it ("judge") after parse.
+    #[serde(default)]
     pub persona_id: String,
 }
 
@@ -107,11 +146,14 @@ pub struct Table {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Citation {
+    #[serde(deserialize_with = "coerce_string")]
     pub id: String,
     pub source: String,
     #[serde(default)]
     pub url: Option<String>,
     pub excerpt: String,
+    /// Judge JSON never carries this — backend fills it ("judge") after parse.
+    #[serde(default)]
     pub persona_id: String,
 }
 

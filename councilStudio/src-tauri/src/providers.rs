@@ -372,6 +372,20 @@ pub async fn chat_step(
 
 const JUDGE_SYSTEM_PROMPT: &str = "You are a council judge. Your job is to synthesize multiple AI persona responses into a structured evaluation. Respond with ONLY a single JSON object. Begin with `{`, end with `}`. No markdown, no code fences, no prose. Minimal example: {\"summary\":\"…\",\"consensus\":[],\"disagreements\":[],\"minority_views\":[],\"recommendations\":[],\"confidence_score\":50,\"synthesis\":\"…\",\"diagrams\":[],\"citations\":[],\"tables\":[],\"missing_personas\":[]}. Always output valid JSON with the fields: summary, consensus, disagreements, minority_views, recommendations, confidence_score, synthesis, diagrams, citations, tables, missing_personas. Never omit a field. `diagrams` is an array of {\"id\",\"code\",\"caption\"} where `code` is raw mermaid source (no fences) — only include a diagram if one genuinely helps. `citations` is an array of {\"id\",\"source\",\"url\",\"excerpt\"} for external sources referenced in your text via [{n}] markers. `tables` is an array of {\"id\",\"caption\",\"columns\":[\"...\"],\"rows\":[[\"...\"]]} for structured comparison data (each row has one cell per column) — emit [] when nothing tabular helps. `missing_personas` is an array of the persona names that failed or produced no usable response. `summary` and `synthesis` are markdown and may contain ```mermaid fences, [{n}] citation markers and ```table fenced blocks (a ```table fence holds ONE JSON object {\"caption\",\"columns\",\"rows\"}). Never emit raw HTML.";
 
+/// serde helper: judge models emit `"85%"`, `"85"`, or plain numbers for
+/// confidence_score — accept all, fall back to 0.
+fn coerce_confidence<'de, D>(d: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v: serde_json::Value = serde::Deserialize::deserialize(d)?;
+    Ok(match v {
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        serde_json::Value::String(s) => s.trim().trim_end_matches('%').parse().unwrap_or(0.0),
+        _ => 0.0,
+    })
+}
+
 /// Tolerant wire shape for the judge's JSON verdict. The judge model emits
 /// snake_case keys and no token/latency fields, so this is kept separate from
 /// the camelCase `JudgeResult` sent to the frontend. Every field defaults so
@@ -388,7 +402,11 @@ struct JudgeVerdict {
     minority_views: Vec<String>,
     #[serde(default, alias = "recommendations")]
     recommendations: Vec<String>,
-    #[serde(default, alias = "confidenceScore")]
+    #[serde(
+        default,
+        alias = "confidenceScore",
+        deserialize_with = "coerce_confidence"
+    )]
     confidence_score: f64,
     #[serde(default, alias = "synthesis")]
     synthesis: String,
@@ -1247,6 +1265,21 @@ mod tests {
             attachments: &[],
             tools,
         }
+    }
+
+    #[test]
+    fn judge_parse_survives_numeric_ids_and_table_cells() {
+        // Judge models ignore the "each cell is a string" contract and emit
+        // bare numbers for ids/rows/confidence. Those verdicts must still
+        // parse instead of falling to the unstructured salvage path.
+        let content = r#"{"summary":"s","consensus":[],"disagreements":[],"minority_views":[],"recommendations":[],"confidence_score":"85%","synthesis":"syn","diagrams":[],"citations":[{"id":1,"source":"web","excerpt":"e"}],"tables":[{"id":2,"caption":"t","columns":["A","B"],"rows":[["x",5],[3,"y"]]}],"missing_personas":[]}"#;
+        let v =
+            parse_judge_json(content).expect("numeric ids/cells in judge JSON should still parse");
+        assert_eq!(v.tables[0].rows[0][1], "5");
+        assert_eq!(v.tables[0].rows[1][0], "3");
+        assert_eq!(v.tables[0].id, "2");
+        assert_eq!(v.citations[0].id, "1");
+        assert_eq!(v.confidence_score, 85.0);
     }
 
     #[test]
