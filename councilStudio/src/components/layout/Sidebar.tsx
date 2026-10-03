@@ -37,7 +37,7 @@ const NAV_ITEMS: NavItem[] = [
 
 const BOTTOM_ITEMS: NavItem[] = [
   { id: "analytics", label: "Analytics", icon: AnalyticsIcon, comingSoon: true },
-  { id: "integrations", label: "Integrations", icon: IntegrationsIcon, comingSoon: true },
+  { id: "integrations", label: "Integrations", icon: IntegrationsIcon },
   { id: "api-keys", label: "API Keys", icon: ApiKeyIcon },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -64,7 +64,7 @@ export function Sidebar() {
         setCurrentView("members");
       } else if (id === "home" || id === "council") {
         setCurrentView("home");
-      } else if (id === "prompts" || id === "sessions") {
+      } else if (id === "prompts" || id === "sessions" || id === "integrations") {
         setCurrentView(id);
       }
     },
