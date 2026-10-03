@@ -38,6 +38,9 @@ export default function DiagramBlock({ code, caption }: DiagramBlockProps) {
         if (!cancelled) setSvg(svg);
       })
       .catch((e) => {
+        // mermaid leaves its error SVG in a temp body node on parse failure — remove it.
+        document.getElementById(id)?.remove();
+        document.getElementById(`d${id}`)?.remove();
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       });
     return () => {
