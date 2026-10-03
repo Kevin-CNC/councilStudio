@@ -9,11 +9,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAppStore, selectCurrentPrompt, selectMembers, selectIsRunning, selectJudgeModel, selectJudgeProvider, selectAttachments } from "@/stores/appStore";
+import { useAppStore, selectCurrentPrompt, selectMembers, selectIsRunning, selectJudgeModel, selectJudgeProvider, selectAttachments, selectCustomVars } from "@/stores/appStore";
 import { PromptHistory } from "./PromptHistory";
 import { CompatibilityWarningDialog } from "./CompatibilityWarningDialog";
 import { JudgeConfigDialog } from "./JudgeConfigDialog";
 import { checkModelCompatibility } from "@/lib/tauri-bridge";
+import { tokenizePrompt, type PromptToken } from "@/lib/prompt-vars";
 import { toast } from "@/components/ui/toaster";
 import { motion, AnimatePresence } from "framer-motion";
 import type { MemberCompatibilityCheck, Provider } from "@/types";
@@ -21,16 +22,39 @@ import {
   Play,
   Square,
   Paperclip,
-  Mic,
-  BookOpen,
   Gavel,
   X,
   GripHorizontal,
 } from "lucide-react";
+import { KnowledgeBaseIcon, VoiceIcon } from "@/components/icons/AppIcons";
 
 const MAX_CHARS = 4000;
 const MIN_EDITOR_HEIGHT = 120;
 const DEFAULT_EDITOR_HEIGHT = 200;
+
+const TOKEN_CLASSNAMES: Record<PromptToken["type"], string> = {
+  text: "",
+  bold: "font-bold",
+  italic: "italic",
+  code: "rounded bg-muted text-foreground/90",
+  codeblock: "rounded bg-muted text-foreground/90",
+  "var-known": "rounded bg-primary/15 text-primary font-medium",
+  "var-unknown": "rounded text-muted-foreground underline decoration-dashed decoration-muted-foreground/60",
+};
+
+function PromptOverlay({ tokens }: { tokens: PromptToken[] }) {
+  return (
+    <>
+      {tokens.map((token, i) => (
+        <span key={i} className={TOKEN_CLASSNAMES[token.type]}>
+          {token.text}
+        </span>
+      ))}
+      {/* Trailing newline padding so the caret has room to sit on a final blank line */}
+      {"\n"}
+    </>
+  );
+}
 
 export function PromptEditor() {
   const currentPrompt = useAppStore(selectCurrentPrompt);
@@ -44,8 +68,10 @@ export function PromptEditor() {
   const attachments = useAppStore(selectAttachments);
   const addAttachments = useAppStore((s) => s.addAttachments);
   const removeAttachment = useAppStore((s) => s.removeAttachment);
+  const customVars = useAppStore(selectCustomVars);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [editorHeight, setEditorHeight] = useState(DEFAULT_EDITOR_HEIGHT);
   const dragState = useRef<{ startY: number; startH: number } | null>(null);
@@ -78,6 +104,18 @@ export function PromptEditor() {
     window.addEventListener("pointerup", onUp);
   }, []);
   const charCount = currentPrompt.length;
+  const knownVarNames = useMemo(() => new Set(Object.keys(customVars)), [customVars]);
+  const promptTokens = useMemo(
+    () => tokenizePrompt(currentPrompt, knownVarNames),
+    [currentPrompt, knownVarNames]
+  );
+  const handleEditorScroll = useCallback(() => {
+    const ta = textareaRef.current;
+    const overlay = overlayRef.current;
+    if (!ta || !overlay) return;
+    overlay.scrollTop = ta.scrollTop;
+    overlay.scrollLeft = ta.scrollLeft;
+  }, []);
   const [isChecking, setIsChecking] = useState(false);
   const [compatDialogOpen, setCompatDialogOpen] = useState(false);
   const [judgeConfigOpen, setJudgeConfigOpen] = useState(false);
@@ -189,17 +227,26 @@ export function PromptEditor() {
         </div>
       )}
 
-      {/* Textarea */}
+      {/* Textarea, with a highlighted overlay behind it for markdown + @var styling */}
       <div className="relative">
+        <div
+          ref={overlayRef}
+          aria-hidden="true"
+          className="styled-scrollbar pointer-events-none absolute inset-0 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-transparent px-3 py-2 text-sm leading-relaxed text-foreground"
+          style={{ height: editorHeight }}
+        >
+          <PromptOverlay tokens={promptTokens} />
+        </div>
         <Textarea
           ref={textareaRef}
           placeholder="Ask your council anything..."
           value={currentPrompt}
           onChange={(e) => setPrompt(e.target.value.slice(0, MAX_CHARS))}
+          onScroll={handleEditorScroll}
           disabled={isRunning}
           style={{ height: editorHeight }}
           className={cn(
-            "styled-scrollbar resize-none text-sm leading-relaxed",
+            "styled-scrollbar relative resize-none bg-transparent text-sm leading-relaxed text-transparent caret-foreground",
             "focus-visible:ring-2 focus-visible:ring-primary/30",
             isRunning && "opacity-60"
           )}
@@ -254,12 +301,12 @@ export function PromptEditor() {
           <Paperclip className="h-4 w-4" />
         </Button>
         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground">
-          <Mic className="h-4 w-4" />
+          <VoiceIcon className="h-4 w-4" />
         </Button>
 
         <PromptHistory onSelect={(prompt) => setPrompt(prompt)}>
           <Button id="prompt-history-button" variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground">
-            <BookOpen className="h-3.5 w-3.5" />
+            <KnowledgeBaseIcon className="h-3.5 w-3.5" />
             Templates
           </Button>
         </PromptHistory>

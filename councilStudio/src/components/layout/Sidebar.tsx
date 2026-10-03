@@ -4,20 +4,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
+import { History, PanelLeftClose, PanelLeft } from "lucide-react";
 import {
-  Users,
-  MessageSquare,
-  History,
-  FileText,
-  BookOpen,
-  BarChart3,
-  Plug,
-  Key,
-  Settings,
-  PanelLeftClose,
-  PanelLeft,
-  UserCircle,
-} from "lucide-react";
+  AnalyticsIcon,
+  ApiKeyIcon,
+  CouncilIcon,
+  FilesIcon,
+  IntegrationsIcon,
+  KnowledgeBaseIcon,
+  MemberIcon,
+  PromptsIcon,
+  SettingsIcon,
+} from "@/components/icons/AppIcons";
 
 interface NavItem {
   id: string;
@@ -29,19 +27,19 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "council", label: "Council", icon: Users, badge: "6" },
-  { id: "members", label: "Members", icon: UserCircle },
-  { id: "prompts", label: "Prompts", icon: MessageSquare },
+  { id: "council", label: "Council", icon: CouncilIcon, badge: "6" },
+  { id: "members", label: "Members", icon: MemberIcon },
+  { id: "prompts", label: "Prompts", icon: PromptsIcon },
   { id: "sessions", label: "Sessions", icon: History },
-  { id: "knowledge", label: "Knowledge Base", icon: BookOpen, comingSoon: true },
-  { id: "files", label: "Files", icon: FileText, comingSoon: true },
+  { id: "knowledge", label: "Knowledge Base", icon: KnowledgeBaseIcon, comingSoon: true },
+  { id: "files", label: "Files", icon: FilesIcon, comingSoon: true },
 ];
 
 const BOTTOM_ITEMS: NavItem[] = [
-  { id: "analytics", label: "Analytics", icon: BarChart3, comingSoon: true },
-  { id: "integrations", label: "Integrations", icon: Plug, comingSoon: true },
-  { id: "api-keys", label: "API Keys", icon: Key },
-  { id: "settings", label: "Settings", icon: Settings },
+  { id: "analytics", label: "Analytics", icon: AnalyticsIcon, comingSoon: true },
+  { id: "integrations", label: "Integrations", icon: IntegrationsIcon },
+  { id: "api-keys", label: "API Keys", icon: ApiKeyIcon },
+  { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
 export function Sidebar() {
@@ -66,7 +64,7 @@ export function Sidebar() {
         setCurrentView("members");
       } else if (id === "home" || id === "council") {
         setCurrentView("home");
-      } else if (id === "prompts" || id === "sessions") {
+      } else if (id === "prompts" || id === "sessions" || id === "integrations") {
         setCurrentView(id);
       }
     },

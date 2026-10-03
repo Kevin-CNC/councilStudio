@@ -1,7 +1,6 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
-import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,11 +9,16 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ResponseCard } from "./ResponseCard";
 import { RawResponseDialog } from "./RawResponseDialog";
+import { MarkdownRenderer } from "./MarkdownRenderer";
+import { confirmOpenExternal } from "@/lib/openExternal";
+import { TimelineGantt } from "./TimelineGantt";
 import { motion, AnimatePresence } from "framer-motion";
+
+const DiagramBlock = lazy(() => import("./DiagramBlock"));
+const DataTableBlock = lazy(() => import("./DataTableBlock"));
 import {
   LayoutGrid,
   GitMerge,
-  GitCompare,
   Link2,
   Clock,
   BarChart3,
@@ -80,9 +84,6 @@ export function ResponsePanel() {
             <TabsTrigger value="consensus" className="gap-1.5 text-xs px-3 py-1.5">
               <GitMerge className="h-3.5 w-3.5" /> Consensus
             </TabsTrigger>
-            <TabsTrigger value="differences" className="gap-1.5 text-xs px-3 py-1.5">
-              <GitCompare className="h-3.5 w-3.5" /> Differences
-            </TabsTrigger>
             <TabsTrigger value="sources" className="gap-1.5 text-xs px-3 py-1.5">
               <Link2 className="h-3.5 w-3.5" /> Sources
             </TabsTrigger>
@@ -122,11 +123,18 @@ export function ResponsePanel() {
             {activeTab === "consensus" && (
               <ConsensusTab judgeResult={judgeResult} judgeStatus={judgeStatus} />
             )}
-            {activeTab === "differences" && (
-              <DifferencesTab judgeResult={judgeResult} judgeStatus={judgeStatus} />
+            {activeTab === "sources" && (
+              <SourcesTab results={results} judgeResult={judgeResult} members={members} />
             )}
-            {activeTab === "sources" && <SourcesTab results={results} />}
-            {activeTab === "timeline" && <TimelineTab results={results} />}
+            {activeTab === "timeline" && (
+              <TimelineGantt
+                results={results}
+                judgeResult={judgeResult}
+                runStartedAt={activeRun.startedAt}
+                runCompletedAt={activeRun.completedAt}
+                members={members}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </ScrollArea>
@@ -201,9 +209,94 @@ function OverviewTab({ results, judgeResult, isRunning, judgeStatus }: any) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-foreground leading-relaxed">{judgeResult.summary}</p>
+          <MarkdownRenderer
+            content={judgeResult.summary}
+            citations={judgeResult.citations ?? []}
+            tables={judgeResult.tables ?? []}
+          />
         </CardContent>
       </Card>
+
+      {/* Unstructured judge output — backend salvage ran but recovery was partial */}
+      {judgeResult.structured === false && (
+        <Card className="border-yellow-200 bg-yellow-50/60 dark:bg-yellow-950/20">
+          <CardContent className="p-4 text-sm text-foreground">
+            <span className="font-medium">Unstructured judge output: </span>
+            The judge did not return valid JSON, so the raw response text is shown below.
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Missing personas */}
+      {judgeResult.missingPersonas && judgeResult.missingPersonas.length > 0 && (
+        <Card className="border-yellow-200 bg-yellow-50/60 dark:bg-yellow-950/20">
+          <CardContent className="p-4 text-sm text-foreground">
+            <span className="font-medium">Missing personas: </span>
+            {judgeResult.missingPersonas.join(", ")}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Judge synthesis (markdown, may include diagrams/citations) */}
+      {judgeResult.synthesis && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Gavel className="h-4 w-4 text-primary" />
+              Judge Synthesis
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MarkdownRenderer
+              content={judgeResult.synthesis}
+              citations={judgeResult.citations ?? []}
+              tables={judgeResult.tables ?? []}
+            />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Judge tables (from the JSON `tables` array — no inline placement) */}
+      {judgeResult.tables && judgeResult.tables.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Tables</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {judgeResult.tables.map((t: any, i: number) => (
+              <Suspense
+                key={t.id ?? i}
+                fallback={
+                  <div className="text-xs text-muted-foreground">Rendering table…</div>
+                }
+              >
+                <DataTableBlock table={t} />
+              </Suspense>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Judge diagrams */}
+      {judgeResult.diagrams && judgeResult.diagrams.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Diagrams</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {judgeResult.diagrams.map((d: any, i: number) => (
+              <Suspense
+                key={d.id ?? i}
+                fallback={
+                  <div className="text-xs text-muted-foreground">Rendering diagram…</div>
+                }
+              >
+                <DiagramBlock code={d.code} caption={d.caption} />
+              </Suspense>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Confidence score */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -310,7 +403,8 @@ function ResponsesTab({ results, members, personaStatuses }: any) {
   );
 }
 
-// Consensus Tab
+// Consensus Tab — agreement, disagreement, minority views and the confidence
+// gauge in one view (the Differences tab was merged into this one).
 function ConsensusTab({ judgeResult, judgeStatus }: any) {
   if (!judgeResult) {
     return <JudgePendingCard isRunning judgeStatus={judgeStatus} />;
@@ -326,16 +420,64 @@ function ConsensusTab({ judgeResult, judgeStatus }: any) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ol className="space-y-3">
-            {judgeResult.consensus.map((point: string, i: number) => (
-              <li key={i} className="flex gap-2 text-sm">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold">
-                  {i + 1}
-                </span>
-                <span className="text-foreground">{point}</span>
-              </li>
-            ))}
-          </ol>
+          {judgeResult.consensus.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No consensus points reported.</p>
+          ) : (
+            <ol className="space-y-3">
+              {judgeResult.consensus.map((point: string, i: number) => (
+                <li key={i} className="flex gap-2 text-sm">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-semibold">
+                    {i + 1}
+                  </span>
+                  <span className="text-foreground">{point}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <GitMerge className="h-4 w-4 text-secondary" />
+            Points of Disagreement
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {judgeResult.disagreements.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No disagreements reported.</p>
+          ) : (
+            <div className="space-y-3">
+              {judgeResult.disagreements.map((point: string, i: number) => (
+                <div key={i} className="rounded-lg border border-border bg-muted/30 p-3">
+                  <p className="text-sm text-foreground">{point}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Minority Views</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {judgeResult.minorityViews.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No minority views reported.</p>
+          ) : (
+            <div className="space-y-2">
+              {judgeResult.minorityViews.map((view: string, i: number) => (
+                <div key={i} className="flex gap-2 text-sm">
+                  <Badge variant="outline" className="h-5 text-[10px] shrink-0 bg-yellow-50 text-yellow-700 border-yellow-200">
+                    Minority
+                  </Badge>
+                  <span className="text-foreground">{view}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -374,56 +516,17 @@ function ConsensusTab({ judgeResult, judgeStatus }: any) {
   );
 }
 
-// Differences Tab
-function DifferencesTab({ judgeResult, judgeStatus }: any) {
-  if (!judgeResult) {
-    return <JudgePendingCard isRunning judgeStatus={judgeStatus} />;
-  }
+// Sources Tab — member + judge citations, with clickable URLs and persona names.
+function SourcesTab({ results, judgeResult, members }: any) {
+  const nameFor = (personaId: string) =>
+    personaId === "judge"
+      ? "Judge"
+      : (members.find((m: any) => m.id === personaId)?.name ?? personaId);
 
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <GitCompare className="h-4 w-4 text-secondary" />
-            Points of Disagreement
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {judgeResult.disagreements.map((point: string, i: number) => (
-              <div key={i} className="rounded-lg border border-border bg-muted/30 p-3">
-                <p className="text-sm text-foreground">{point}</p>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Minority Views</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {judgeResult.minorityViews.map((view: string, i: number) => (
-              <div key={i} className="flex gap-2 text-sm">
-                <Badge variant="outline" className="h-5 text-[10px] shrink-0 bg-yellow-50 text-yellow-700 border-yellow-200">
-                  Minority
-                </Badge>
-                <span className="text-foreground">{view}</span>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// Sources Tab
-function SourcesTab({ results }: any) {
-  const allCitations = results.flatMap((r: any) => r.citations || []);
+  const allCitations = [
+    ...results.flatMap((r: any) => r.citations || []),
+    ...(judgeResult?.citations || []),
+  ];
 
   return (
     <div className="space-y-4">
@@ -439,15 +542,33 @@ function SourcesTab({ results }: any) {
             <p className="text-sm text-muted-foreground">No citations in this run.</p>
           ) : (
             <div className="space-y-2">
-              {allCitations.map((c: any) => (
-                <div key={c.id} className="rounded-lg border border-border p-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-foreground">{c.source}</span>
-                    <Badge variant="outline" className="text-[10px]">
-                      {c.personaId}
+              {allCitations.map((c: any, i: number) => (
+                <div
+                  key={`${c.personaId}-${c.id}-${i}`}
+                  className="rounded-lg border border-border p-3"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    {c.url ? (
+                      <button
+                        type="button"
+                        onClick={() => confirmOpenExternal(c.url)}
+                        className="text-sm font-medium text-primary hover:underline text-left"
+                      >
+                        {c.source}
+                      </button>
+                    ) : (
+                      <span className="text-sm font-medium text-foreground">{c.source}</span>
+                    )}
+                    <Badge variant="outline" className="text-[10px] shrink-0">
+                      {nameFor(c.personaId)}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground italic">{c.excerpt}</p>
+                  {c.url && (
+                    <p className="mb-1 break-all font-mono text-[10px] text-muted-foreground">{c.url}</p>
+                  )}
+                  {c.excerpt && (
+                    <p className="text-xs text-muted-foreground italic">{c.excerpt}</p>
+                  )}
                 </div>
               ))}
             </div>
@@ -458,48 +579,8 @@ function SourcesTab({ results }: any) {
   );
 }
 
-// Timeline Tab
-function TimelineTab({ results }: any) {
-  const sorted = [...results].sort((a, b) => a.startedAt - b.startedAt);
-
-  return (
-    <div className="space-y-1">
-      {sorted.map((r) => (
-        <motion.div
-          key={r.personaId}
-          initial={{ opacity: 0, x: -10 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.15 }}
-          className="flex gap-3 pb-4"
-        >
-          <div className="flex flex-col items-center">
-            <div className="h-3 w-3 rounded-full bg-primary" />
-            <div className="flex-1 w-px bg-border mt-1" />
-          </div>
-          <div className="flex-1 -mt-0.5">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-medium text-foreground">{r.personaName}</span>
-              <span className="text-[11px] font-mono text-muted-foreground">
-                {(r.latencyMs / 1000).toFixed(1)}s
-              </span>
-            </div>
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px]",
-                r.status === "completed" ? "bg-green-50 text-green-700 border-green-200" :
-                r.status === "failed" ? "bg-red-50 text-red-700 border-red-200" :
-                "bg-blue-50 text-blue-700 border-blue-200"
-              )}
-            >
-              {r.status}
-            </Badge>
-          </div>
-        </motion.div>
-      ))}
-    </div>
-  );
-}
+// Old TimelineTab replaced by ./TimelineGantt (telemetry graph keyed to the
+// run's start). Removed here intentionally.
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (

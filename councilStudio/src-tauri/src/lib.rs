@@ -1,17 +1,22 @@
 mod cmds;
 mod compatibility;
 mod db;
+mod harness;
+mod mcp;
+mod mcp_secrets;
 mod models;
 mod orchestrator;
+mod pricing;
 mod providers;
 mod secrets;
 
 use cmds::{
-    cancel_run, check_model_compatibility, create_council, create_member, delete_council,
-    delete_member, delete_prompt_template, delete_session, get_api_keys, get_session,
-    list_councils, list_members, list_prompt_templates, list_sessions, pin_session,
-    reorder_members, run_council, save_api_key, save_prompt_template, save_session,
-    seed_default_members, update_council, update_member,
+    assign_mcp_servers, cancel_run, check_model_compatibility, create_council, create_mcp_server,
+    create_member, delete_council, delete_mcp_server, delete_member, delete_prompt_template,
+    delete_session, get_api_keys, get_session, list_councils, list_mcp_servers, list_mcp_tools,
+    list_members, list_prompt_templates, list_sessions, pin_session, reorder_members, run_council,
+    save_api_key, save_prompt_template, save_session, seed_default_members, test_mcp_connection,
+    update_council, update_mcp_server, update_member,
 };
 use std::sync::Mutex;
 use tauri::Manager;
@@ -56,6 +61,13 @@ pub fn run() {
             save_prompt_template,
             list_prompt_templates,
             delete_prompt_template,
+            create_mcp_server,
+            list_mcp_servers,
+            update_mcp_server,
+            delete_mcp_server,
+            test_mcp_connection,
+            list_mcp_tools,
+            assign_mcp_servers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

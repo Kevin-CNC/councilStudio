@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { useAppStore } from "@/stores/appStore";
 import { matchShortcut, type ShortcutAction } from "@/lib/shortcuts";
 
-const TAB_IDS = ["overview", "responses", "consensus", "differences", "sources", "timeline"] as const;
+const TAB_IDS = ["overview", "responses", "consensus", "sources", "timeline"] as const;
 
 /** True when focus is inside a text-editing element. */
 function isEditableTarget(target: EventTarget | null): boolean {

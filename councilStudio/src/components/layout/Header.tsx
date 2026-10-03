@@ -9,15 +9,8 @@ import {
 import { useAppStore } from "@/stores/appStore";
 import { KIND_STYLES, useToastStore } from "@/components/ui/toaster";
 import { useShallow } from "zustand/react/shallow";
-import {
-  Search,
-  Bell,
-  Settings,
-  Sun,
-  Moon,
-  ChevronDown,
-  Menu,
-} from "lucide-react";
+import { Search, Sun, Moon, ChevronDown, Menu } from "lucide-react";
+import { NotifIcon, SettingsIcon } from "@/components/icons/AppIcons";
 
 function timeAgo(ts: number): string {
   const s = Math.floor((Date.now() - ts) / 1000);
@@ -111,7 +104,7 @@ export function Header() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button id="header-notifications-button" variant="ghost" size="icon" className="relative text-muted-foreground">
-              <Bell className="h-4 w-4" />
+              <NotifIcon className="h-4 w-4" />
               {unreadCount > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground">
                   {unreadCount > 9 ? "9+" : unreadCount}
@@ -176,7 +169,7 @@ export function Header() {
           onClick={() => setSettingsOpen(true)}
           className="text-muted-foreground"
         >
-          <Settings className="h-4 w-4" />
+          <SettingsIcon className="h-4 w-4" />
         </Button>
       </div>
     </header>

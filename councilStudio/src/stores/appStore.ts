@@ -15,9 +15,15 @@ import type {
   TemplateExportItem,
   SessionExportItem,
   PromptAttachment,
+  McpServer,
+  McpServerCreate,
+  McpServerUpdate,
+  McpTestResult,
 } from "@/types";
 import * as bridge from "@/lib/tauri-bridge";
 import { toast } from "@/components/ui/toaster";
+import { computeSessionCosts } from "@/lib/metrics";
+import { resolvePromptVars } from "@/lib/prompt-vars";
 import {
   DEFAULT_SHORTCUTS,
   loadShortcuts,
@@ -36,6 +42,9 @@ const LS_KEYS = {
   judgeModel: "judge-model",
   judgeProvider: "judge-provider",
   currentCouncilId: "current-council-id",
+  concurrency: "session-concurrency",
+  sessionMaxTokens: "session-max-tokens",
+  customVars: "session-custom-vars",
 } as const;
 
 function lsGet(key: string): string | null {
@@ -74,8 +83,24 @@ function storedJudgeProvider(): Provider {
     : "anthropic";
 }
 
-type TabId = "overview" | "responses" | "consensus" | "differences" | "sources" | "timeline";
-type ViewId = "home" | "prompts" | "sessions" | "members";
+function storedNumber(key: string, fallback: number): number {
+  const n = Number(lsGet(key));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function storedRecord(key: string): Record<string, string> {
+  try {
+    const raw = lsGet(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+type TabId = "overview" | "responses" | "consensus" | "sources" | "timeline";
+type ViewId = "home" | "prompts" | "sessions" | "members" | "integrations";
 
 /** Internal active run — personaResults stored as Record for O(1) streaming updates. */
 export type ActiveRun = Omit<CouncilRun, "personaResults"> & {
@@ -93,6 +118,8 @@ interface AppState {
   // Data
   members: Persona[];
   councils: Council[];
+  /** MCP integration servers (rows carry no secret material). */
+  mcpServers: McpServer[];
   /** Active council. Members run only when enabled AND in this council. */
   currentCouncilId: string | null;
   sessions: Session[];
@@ -107,6 +134,12 @@ interface AppState {
   cancelledRunId: string | null;
   judgeModel: string;
   judgeProvider: Provider;
+  /** Session-level parallelism draft. Not yet enforced by the orchestrator (v1: display-only). */
+  concurrency: number;
+  /** Session-level token cap draft. Not yet enforced by the orchestrator (v1: display-only). */
+  sessionMaxTokens: number;
+  /** User-defined key-value session variables. */
+  customVars: Record<string, string>;
   /** Live per-member progress, keyed by member id. */
   personaStatuses: Record<string, MemberRunStatus>;
   /** Judge lifecycle: idle until the backend says it's synthesizing. */
@@ -116,6 +149,8 @@ interface AppState {
   isLoading: boolean;
   /** False until the first loadSessions() settles — drives the sessions-page spinner. */
   sessionsLoaded: boolean;
+  /** False until App init() finishes all startup loads — gates the boot LoaderScreen. */
+  isBootstrapped: boolean;
   error: string | null;
 
   // UI — flattened for fine-grained subscriptions
@@ -139,8 +174,11 @@ interface AppState {
   shortcuts: Record<ShortcutAction, ShortcutBinding>;
   importPreviewOpen: boolean;
   importPreviewData: { type: "members" | "templates"; items: MemberExportItem[] | TemplateExportItem[]; fileName: string } | null;
+  /** External URL awaiting user confirmation before opening in the browser. */
+  pendingExternalUrl: string | null;
   setImportPreviewOpen: (open: boolean) => void;
   setImportPreviewData: (data: AppState["importPreviewData"]) => void;
+  setPendingExternalUrl: (url: string | null) => void;
 
   // Actions - Members
   loadMembers: () => Promise<void>;
@@ -169,6 +207,18 @@ interface AppState {
   importTemplates: (items: TemplateExportItem[]) => Promise<{ imported: number; errors: string[] }>;
   importSessions: (items: SessionExportItem[]) => Promise<{ imported: number; errors: string[] }>;
 
+  // Actions - MCP servers
+  loadMcpServers: () => Promise<void>;
+  addMcpServer: (payload: McpServerCreate) => Promise<McpServer>;
+  editMcpServer: (payload: McpServerUpdate) => Promise<McpServer>;
+  removeMcpServer: (id: string) => Promise<void>;
+  /** Probe a config without saving — drives the form's Test Connection button. */
+  probeMcpConnection: (config: McpServerCreate, mcpServerId?: string) => Promise<McpTestResult>;
+  /** Union-add a server to the given members. */
+  assignMcpToMembers: (serverId: string, memberIds: string[]) => Promise<void>;
+  /** Strip a server from every member that has it. */
+  removeMcpFromAll: (serverId: string) => Promise<void>;
+
   // Actions - Prompt
   setPrompt: (prompt: string) => void;
   addAttachments: (files: File[]) => Promise<void>;
@@ -179,6 +229,10 @@ interface AppState {
   runCouncil: () => void;
   cancelRun: () => void;
   setJudge: (model: string, provider: Provider) => void;
+  setConcurrency: (value: number) => void;
+  setSessionMaxTokens: (value: number) => void;
+  setCustomVar: (key: string, value: string) => void;
+  removeCustomVar: (key: string) => void;
 
   // Actions - Sessions
   loadSessions: () => Promise<void>;
@@ -223,6 +277,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Initial data — empty, loaded async from SQLite via Rust
   members: [],
   councils: [],
+  mcpServers: [],
   currentCouncilId: null,
   sessions: [],
   promptTemplates: [],
@@ -235,12 +290,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   cancelledRunId: null,
   judgeModel: lsGet(LS_KEYS.judgeModel) ?? "",
   judgeProvider: storedJudgeProvider(),
+  concurrency: storedNumber(LS_KEYS.concurrency, 4),
+  sessionMaxTokens: storedNumber(LS_KEYS.sessionMaxTokens, 4096),
+  customVars: storedRecord(LS_KEYS.customVars),
   personaStatuses: {},
   judgeStatus: "idle",
 
   // Loading / error
   isLoading: false,
   sessionsLoaded: false,
+  isBootstrapped: false,
   error: null,
 
   // Initial UI state — flat keys for fine-grained subscriptions
@@ -259,11 +318,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTab: "overview",
   selectedSessionId: null,
   responsePanelHeight: 380,
-  responsePanelCollapsed: false,
+  responsePanelCollapsed: true,
   currentView: "home",
   shortcuts: loadShortcuts(),
   importPreviewOpen: false,
   importPreviewData: null,
+  pendingExternalUrl: null,
 
   // --- Member actions (async, backed by SQLite via Tauri) ---
 
@@ -291,6 +351,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         streaming: data.streaming,
         color: data.color,
         reasoningLevel: data.reasoningLevel || "medium",
+        mcpServerIds: data.mcpServerIds ?? [],
       });
       set((state) => ({ members: [...state.members, created] }));
     } catch (e) {
@@ -313,6 +374,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         streaming: updates.streaming,
         color: updates.color,
         reasoningLevel: updates.reasoningLevel,
+        mcpServerIds: updates.mcpServerIds,
       });
       set((state) => ({
         members: state.members.map((m) => (m.id === id ? updated : m)),
@@ -622,6 +684,94 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { imported, errors };
   },
 
+  // --- MCP server actions (async, backed by SQLite via Tauri) ---
+
+  loadMcpServers: async () => {
+    try {
+      const mcpServers = await bridge.listMcpServers();
+      set({ mcpServers });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  addMcpServer: async (payload) => {
+    set({ error: null });
+    try {
+      const created = await bridge.createMcpServer(payload);
+      set((state) => ({ mcpServers: [created, ...state.mcpServers] }));
+      return created;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  editMcpServer: async (payload) => {
+    set({ error: null });
+    try {
+      const updated = await bridge.updateMcpServer(payload);
+      set((state) => ({
+        mcpServers: state.mcpServers.map((s) => (s.id === updated.id ? updated : s)),
+      }));
+      return updated;
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  removeMcpServer: async (id) => {
+    set({ error: null });
+    try {
+      await bridge.deleteMcpServer(id);
+      // Backend strips the id from every member; mirror locally.
+      set((state) => ({
+        mcpServers: state.mcpServers.filter((s) => s.id !== id),
+        members: state.members.map((m) =>
+          m.mcpServerIds?.includes(id)
+            ? { ...m, mcpServerIds: m.mcpServerIds.filter((sid) => sid !== id) }
+            : m
+        ),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  probeMcpConnection: async (config, mcpServerId) => {
+    try {
+      return await bridge.testMcpConnection(config, mcpServerId);
+    } catch (e) {
+      return { ok: false, tools: [], error: String(e) };
+    }
+  },
+
+  assignMcpToMembers: async (serverId, memberIds) => {
+    if (memberIds.length === 0) return;
+    set({ error: null });
+    try {
+      const updated = await bridge.assignMcpServers(serverId, memberIds);
+      const byId = new Map(updated.map((m) => [m.id, m]));
+      set((state) => ({
+        members: state.members.map((m) => byId.get(m.id) ?? m),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  removeMcpFromAll: async (serverId) => {
+    const affected = get().members.filter((m) => m.mcpServerIds?.includes(serverId));
+    for (const m of affected) {
+      await get().updateMember(m.id, {
+        mcpServerIds: (m.mcpServerIds ?? []).filter((sid) => sid !== serverId),
+      });
+    }
+  },
+
   // --- Prompt actions ---
 
   setPrompt: (prompt) => set({ currentPrompt: prompt }),
@@ -653,7 +803,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // --- Run actions ---
 
   runCouncil: () => {
-    const { currentPrompt, members, judgeModel, judgeProvider, attachments } = get();
+    const { currentPrompt, members, judgeModel, judgeProvider, attachments, customVars } = get();
     const council = selectCurrentCouncil(get());
     // Two-layer model: a member runs only when enabled AND in the active
     // council. With no council resolved, fall back to all enabled members.
@@ -698,10 +848,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       attachments: [],
     });
 
+    // @vars are resolved here, right before the backend call, so the
+    // provider/backend only ever sees resolved text — activeRun.prompt above
+    // keeps the raw @var text for session history/replay.
+    const resolvedPrompt = resolvePromptVars(currentPrompt, customVars);
+
     // Backend dispatches personas in parallel and streams results back as
     // Tauri events (see listeners at the bottom of this file).
     bridge
-      .runCouncil(currentPrompt, judgeModel, judgeProvider, runAttachments, council?.id ?? null)
+      .runCouncil(resolvedPrompt, judgeModel, judgeProvider, runAttachments, council?.id ?? null)
       .catch((err) => {
         set((state) => ({
           isRunning: false,
@@ -740,6 +895,29 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ judgeModel: model, judgeProvider: provider });
     lsSet(LS_KEYS.judgeModel, model);
     lsSet(LS_KEYS.judgeProvider, provider);
+  },
+
+  setConcurrency: (value) => {
+    set({ concurrency: value });
+    lsSet(LS_KEYS.concurrency, String(value));
+  },
+
+  setSessionMaxTokens: (value) => {
+    set({ sessionMaxTokens: value });
+    lsSet(LS_KEYS.sessionMaxTokens, String(value));
+  },
+
+  setCustomVar: (key, value) => {
+    const customVars = { ...get().customVars, [key]: value };
+    set({ customVars });
+    lsSet(LS_KEYS.customVars, JSON.stringify(customVars));
+  },
+
+  removeCustomVar: (key) => {
+    const customVars = { ...get().customVars };
+    delete customVars[key];
+    set({ customVars });
+    lsSet(LS_KEYS.customVars, JSON.stringify(customVars));
   },
 
   // --- Session actions ---
@@ -957,6 +1135,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   setImportPreviewOpen: (open) => set({ importPreviewOpen: open }),
 
   setImportPreviewData: (data) => set({ importPreviewData: data }),
+
+  setPendingExternalUrl: (url) => set({ pendingExternalUrl: url }),
 }));
 
 /**
@@ -995,6 +1175,11 @@ async function setCouncilMemberIds(
 
 export const selectMembers = (s: AppState) => s.members;
 export const selectCouncils = (s: AppState) => s.councils;
+export const selectMcpServers = (s: AppState) => s.mcpServers;
+/** How many members an MCP server is assigned to — 0 renders the "unused" tag. */
+export function countMcpUsage(members: Persona[], serverId: string): number {
+  return members.filter((m) => m.mcpServerIds?.includes(serverId)).length;
+}
 export const selectCurrentCouncilId = (s: AppState) => s.currentCouncilId;
 export const selectCurrentCouncil = (s: AppState) =>
   s.councils.find((c) => c.id === s.currentCouncilId) ?? null;
@@ -1010,6 +1195,7 @@ export function selectCurrentCouncilMembers(s: AppState): Persona[] {
 export const selectSessions = (s: AppState) => s.sessions;
 export const selectPromptTemplates = (s: AppState) => s.promptTemplates;
 export const selectCurrentPrompt = (s: AppState) => s.currentPrompt;
+export const selectCustomVars = (s: AppState) => s.customVars;
 export const selectAttachments = (s: AppState) => s.attachments;
 export const selectIsRunning = (s: AppState) => s.isRunning;
 export const selectActiveRun = (s: AppState) => s.activeRun;
@@ -1126,17 +1312,28 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
           state.councils.find((c) => c.id === completedRun.configId)?.name ?? "Default",
         status: "completed",
         personaCount: resultsArray.length,
-        tokensUsed: resultsArray.reduce(
-          (s, r) => s + r.tokensIn + r.tokensOut,
-          0
-        ),
-        totalCost: resultsArray.reduce((s, r) => s + r.cost, 0),
+        tokensUsed:
+          resultsArray.reduce((s, r) => s + r.tokensIn + r.tokensOut, 0) +
+          (state.activeRun.judgeResult
+            ? state.activeRun.judgeResult.tokensIn + state.activeRun.judgeResult.tokensOut
+            : 0),
+        totalCost:
+          resultsArray.reduce((s, r) => s + r.cost, 0) +
+          (state.activeRun.judgeResult?.cost ?? 0),
         durationMs: completedRun.completedAt! - completedRun.startedAt,
         createdAt: completedRun.startedAt,
         updatedAt: completedRun.completedAt!,
         pinned: false,
         tags: [],
         run: completedRun,
+        utilityData: {
+          judge_model: state.judgeModel,
+          judge_provider: state.judgeProvider,
+          max_tokens: state.sessionMaxTokens,
+          concurrency: state.concurrency,
+          customVars: state.customVars,
+          costs: computeSessionCosts(completedRun),
+        },
       };
       bridge.saveSession(session).catch((e) => {
         useAppStore.setState({ error: String(e) });
@@ -1169,17 +1366,28 @@ export async function initStoreListeners(): Promise<UnlistenFn[]> {
           state.councils.find((c) => c.id === terminatedRun.configId)?.name ?? "Default",
         status: "terminated",
         personaCount: resultsArray.length,
-        tokensUsed: resultsArray.reduce(
-          (s, r) => s + r.tokensIn + r.tokensOut,
-          0
-        ),
-        totalCost: resultsArray.reduce((s, r) => s + r.cost, 0),
+        tokensUsed:
+          resultsArray.reduce((s, r) => s + r.tokensIn + r.tokensOut, 0) +
+          (state.activeRun.judgeResult
+            ? state.activeRun.judgeResult.tokensIn + state.activeRun.judgeResult.tokensOut
+            : 0),
+        totalCost:
+          resultsArray.reduce((s, r) => s + r.cost, 0) +
+          (state.activeRun.judgeResult?.cost ?? 0),
         durationMs: terminatedRun.completedAt! - terminatedRun.startedAt,
         createdAt: terminatedRun.startedAt,
         updatedAt: terminatedRun.completedAt!,
         pinned: false,
         tags: [],
         run: terminatedRun,
+        utilityData: {
+          judge_model: state.judgeModel,
+          judge_provider: state.judgeProvider,
+          max_tokens: state.sessionMaxTokens,
+          concurrency: state.concurrency,
+          customVars: state.customVars,
+          costs: computeSessionCosts(terminatedRun),
+        },
       };
       bridge.saveSession(session).catch((e) => {
         useAppStore.setState({ error: String(e) });

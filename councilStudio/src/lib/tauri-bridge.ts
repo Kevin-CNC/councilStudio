@@ -11,6 +11,12 @@ import type {
   CompatibilityCheckRequest,
   CompatibilityCheckResult,
   RunAttachment,
+  SessionUtilityData,
+  McpServer,
+  McpServerCreate,
+  McpServerUpdate,
+  McpTestResult,
+  McpTool,
 } from "@/types";
 
 /**
@@ -187,6 +193,7 @@ interface SessionSummaryDto {
 interface SessionRowDto extends SessionSummaryDto {
   runJson: string;
   rawResponsesJson: string;
+  utilityJson: string;
 }
 
 function sessionFromRow(row: SessionRowDto): Session {
@@ -213,6 +220,15 @@ function sessionFromRow(row: SessionRowDto): Session {
     run.judgeResult.rawResponse = rawMap.judge;
   }
 
+  let utilityData: SessionUtilityData | undefined;
+  if (row.utilityJson?.trim()) {
+    try {
+      utilityData = JSON.parse(row.utilityJson) as SessionUtilityData;
+    } catch {
+      utilityData = undefined;
+    }
+  }
+
   return {
     id: row.id,
     title: row.title,
@@ -229,6 +245,7 @@ function sessionFromRow(row: SessionRowDto): Session {
     pinned: row.pinned,
     tags: row.tags,
     run,
+    utilityData,
   };
 }
 
@@ -262,6 +279,7 @@ export async function saveSession(session: Session): Promise<void> {
       updatedAt: session.updatedAt,
       runJson: JSON.stringify(session.run),
       rawResponsesJson: JSON.stringify(rawMap),
+      utilityJson: session.utilityData ? JSON.stringify(session.utilityData) : "",
     },
   });
 }
@@ -346,4 +364,73 @@ export async function listPromptTemplates(): Promise<PromptTemplate[]> {
  */
 export async function deletePromptTemplate(id: string): Promise<void> {
   return invoke<void>("delete_prompt_template", { request: { id } });
+}
+
+// --- MCP integration servers ------------------------------------------------
+
+/**
+ * Create an MCP server. Env values and the bearer token are split off into
+ * the encrypted secret store by the backend — they never land in the DB row.
+ */
+export async function createMcpServer(
+  payload: McpServerCreate
+): Promise<McpServer> {
+  return invoke<McpServer>("create_mcp_server", { payload });
+}
+
+/**
+ * List all MCP servers, newest first. Rows carry no secret material.
+ */
+export async function listMcpServers(): Promise<McpServer[]> {
+  return invoke<McpServer[]>("list_mcp_servers");
+}
+
+/**
+ * Partially update an MCP server. For secret fields (env, bearerToken):
+ * undefined keeps the stored value, "" clears it, a value replaces it.
+ */
+export async function updateMcpServer(
+  payload: McpServerUpdate
+): Promise<McpServer> {
+  return invoke<McpServer>("update_mcp_server", { payload });
+}
+
+/**
+ * Delete an MCP server: row, encrypted secrets, and every member assignment.
+ */
+export async function deleteMcpServer(id: string): Promise<void> {
+  return invoke<void>("delete_mcp_server", { request: { id } });
+}
+
+/**
+ * Probe a config without persisting: connect + list tools. When editing an
+ * existing server pass `mcpServerId` so stored secrets fill blank fields.
+ */
+export async function testMcpConnection(
+  config: McpServerCreate,
+  mcpServerId?: string
+): Promise<McpTestResult> {
+  return invoke<McpTestResult>("test_mcp_connection", {
+    config,
+    mcpServerId: mcpServerId ?? null,
+  });
+}
+
+/**
+ * List a saved server's advertised tools via a fresh connect.
+ */
+export async function listMcpTools(id: string): Promise<McpTool[]> {
+  return invoke<McpTool[]>("list_mcp_tools", { request: { id } });
+}
+
+/**
+ * Bulk-assign an MCP server to members (union-add). Returns updated members.
+ */
+export async function assignMcpServers(
+  mcpServerId: string,
+  memberIds: string[]
+): Promise<Persona[]> {
+  return invoke<Persona[]>("assign_mcp_servers", {
+    request: { mcpServerId, memberIds },
+  });
 }

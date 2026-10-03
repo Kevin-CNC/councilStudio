@@ -2,10 +2,19 @@ export type Theme = "light" | "dark";
 
 export type Provider = "anthropic" | "openai" | "openrouter" | "ollama";
 
-export type RunStatus = "queued" | "running" | "streaming" | "completed" | "partial" | "failed" | "cancelled" | "terminated";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "streaming"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelled"
+  | "terminated";
 
 /** Live per-member progress during a council run. */
-export type MemberRunStatus = "waiting" | "thinking" | "completed" | "failed" | "cancelled";
+export type MemberRunStatus =
+  "waiting" | "thinking" | "completed" | "failed" | "cancelled";
 
 export interface Persona {
   id: string;
@@ -22,6 +31,77 @@ export interface Persona {
   tools?: string[];
   knowledgeSources?: string[];
   reasoningLevel?: "none" | "low" | "medium" | "high";
+  /** MCP integration servers assigned to this member (server ids). */
+  mcpServerIds?: string[];
+}
+
+// --- MCP integration servers ---
+
+export type McpTransport = "stdio" | "http";
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+}
+
+/** Live status of a probed MCP server connection. */
+export interface McpStatus {
+  connected: boolean;
+  toolCount?: number;
+  lastUsedMs?: number;
+}
+
+/**
+ * An MCP server row as the backend returns it. Secret material (bearer token,
+ * env values) never appears here — `hasBearer`/`envKeys` are display metadata.
+ */
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: McpTransport;
+  command: string;
+  args: string[];
+  envKeys: string[];
+  url: string;
+  headers: Record<string, string>;
+  hasBearer: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Create payload. `env` values and `bearerToken` go to the encrypted store. */
+export interface McpServerCreate {
+  name: string;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  bearerToken?: string;
+}
+
+/**
+ * Update payload — absent fields keep their value. For secrets: empty string
+ * clears the stored secret, a value replaces it, absent keeps it.
+ */
+export interface McpServerUpdate {
+  id: string;
+  name?: string;
+  transport?: McpTransport;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  bearerToken?: string;
+}
+
+export interface McpTestResult {
+  ok: boolean;
+  tools: McpTool[];
+  error?: string;
 }
 
 export interface ProviderCredential {
@@ -90,7 +170,11 @@ export interface PersonaResult {
   tokensOut: number;
   latencyMs: number;
   cost: number;
+  inputCost: number;
+  outputCost: number;
   citations?: Citation[];
+  /** Tables extracted from ```table fences; `{{table:n}}` markers stay inline in `content`. */
+  tables?: Table[];
   startedAt: number;
   completedAt?: number;
 }
@@ -106,7 +190,22 @@ export interface JudgeResult {
   tokensIn: number;
   tokensOut: number;
   latencyMs: number;
+  cost: number;
   rawResponse?: string;
+  /** Mermaid diagrams the judge wants rendered. */
+  diagrams?: Diagram[];
+  /** External sources the judge cited via `[{n}]` markers. */
+  citations?: Citation[];
+  /** Tables the judge wants shown (JSON array plus ```table fences in summary/synthesis). */
+  tables?: Table[];
+  /** Personas that failed/timed out (spec `missingPersonas`). */
+  missingPersonas?: string[];
+  /** Wall-clock start of the judge call (unix ms) — drives the telemetry lane. */
+  startedAt?: number;
+  /** Wall-clock end of the judge call (unix ms); absent while still running. */
+  completedAt?: number;
+  /** `false` → UI shows an unstructured-output banner; `undefined` treated as structured. */
+  structured?: boolean;
 }
 
 export interface Citation {
@@ -114,6 +213,22 @@ export interface Citation {
   source: string;
   url?: string;
   excerpt: string;
+  personaId: string;
+}
+
+/** A mermaid diagram a member or the judge wants rendered. `code` is raw source (no fences). */
+export interface Diagram {
+  id: string;
+  code: string;
+  caption?: string;
+}
+
+/** A structured data table a member or the judge wants rendered. Rows are rectangular (one cell per column). */
+export interface Table {
+  id: string;
+  caption?: string;
+  columns: string[];
+  rows: string[][];
   personaId: string;
 }
 
@@ -168,6 +283,36 @@ export interface Session {
   tags: string[];
   /** Full run detail. Omitted from list views — fetched lazily on selection. */
   run?: CouncilRun;
+  utilityData?: SessionUtilityData;
+}
+
+// Per-member cost/throughput snapshot (derived, not user-edited)
+export interface MemberUtilityCost {
+  memberId: string;
+  member: string;
+  tokenThroughputPerMin: number;
+  cost: number;
+  inputCost: number;
+  outputCost: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface SessionCosts {
+  ovrlAverageCostPerToken: number;
+  ovrlOutputTokens: number;
+  ovrlTokenThroughputPerMin: number;
+  ovrlTotalCost: number;
+  members: MemberUtilityCost[];
+}
+
+export interface SessionUtilityData {
+  judge_model: string;
+  judge_provider: string;
+  max_tokens: number;
+  concurrency: number;
+  customVars: Record<string, string>;
+  costs: SessionCosts;
 }
 
 export interface PromptTemplate {
@@ -200,6 +345,7 @@ export interface PersonaCreate {
   streaming: boolean;
   color: string;
   reasoningLevel: "none" | "low" | "medium" | "high";
+  mcpServerIds?: string[];
 }
 
 // Payload for partially updating an existing member
@@ -214,6 +360,7 @@ export interface PersonaUpdate {
   streaming?: boolean;
   color?: string;
   reasoningLevel?: "none" | "low" | "medium" | "high";
+  mcpServerIds?: string[];
 }
 
 // Model metadata for dropdowns

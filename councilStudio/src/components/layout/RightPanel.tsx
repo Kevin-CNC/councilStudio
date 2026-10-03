@@ -4,16 +4,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppStore } from "@/stores/appStore";
 import { useShallow } from "zustand/react/shallow";
-import {
-  PanelRightClose,
-  PanelRight,
-  ScrollText,
-  Variable,
-  DollarSign,
-  Clock,
-  Activity,
-  Radio,
-} from "lucide-react";
+import { PanelRightClose, PanelRight, Activity } from "lucide-react";
+import { VarsIcon } from "@/components/icons/AppIcons";
+import { VarsTab } from "./VarsTab";
+import { MetricsTab } from "./MetricsTab";
 
 export function RightPanel() {
   const { rightPanelOpen, toggleRightPanel } = useAppStore(
@@ -28,7 +22,7 @@ export function RightPanel() {
       {!rightPanelOpen && (
         <button
           onClick={toggleRightPanel}
-          className="hidden xl:flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+          className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
           title="Open utility panel"
         >
           <PanelRight className="h-4 w-4" />
@@ -38,12 +32,13 @@ export function RightPanel() {
       <AnimatePresence initial={false}>
         {rightPanelOpen && (
           <motion.aside
-            initial={{ x: 24, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 24, opacity: 0 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="hidden xl:flex h-full w-72 flex-col border-l border-border bg-card"
+            initial={{ x: "100%", width: 0 }}
+            animate={{ x: 0, width: "18rem" }}
+            exit={{ x: "100%", width: 0 }}
+            transition={{ duration: 0.22, ease: [0.32, 0.72, 0, 1] }}
+            className="flex h-full shrink-0 flex-col overflow-hidden border-l border-border bg-card"
           >
+            <div className="flex h-full w-full flex-col">
             {/* Header */}
             <div className="flex h-12 items-center justify-between border-b border-border px-3">
               <span className="text-sm font-semibold text-foreground">Utilities</span>
@@ -58,32 +53,20 @@ export function RightPanel() {
             </div>
 
             {/* Tabs */}
-            <Tabs defaultValue="logs" className="flex-1 flex flex-col">
+            <Tabs defaultValue="vars" className="flex-1 min-h-0 flex flex-col">
               <div className="border-b border-border px-2 py-2">
                 <TabsList className="h-auto w-full flex-wrap gap-1 bg-transparent p-0">
-                  <TabsTrigger value="logs" className="gap-1.5 text-xs px-2 py-1">
-                    <ScrollText className="h-3 w-3" /> Logs
-                  </TabsTrigger>
                   <TabsTrigger value="vars" className="gap-1.5 text-xs px-2 py-1">
-                    <Variable className="h-3 w-3" /> Vars
-                  </TabsTrigger>
-                  <TabsTrigger value="costs" className="gap-1.5 text-xs px-2 py-1">
-                    <DollarSign className="h-3 w-3" /> Costs
-                  </TabsTrigger>
-                  <TabsTrigger value="latency" className="gap-1.5 text-xs px-2 py-1">
-                    <Clock className="h-3 w-3" /> Latency
+                    <VarsIcon className="h-3 w-3" /> Vars
                   </TabsTrigger>
                   <TabsTrigger value="metrics" className="gap-1.5 text-xs px-2 py-1">
                     <Activity className="h-3 w-3" /> Metrics
                   </TabsTrigger>
-                  <TabsTrigger value="events" className="gap-1.5 text-xs px-2 py-1">
-                    <Radio className="h-3 w-3" /> Events
-                  </TabsTrigger>
                 </TabsList>
               </div>
 
-              <ScrollArea className="flex-1">
-                  {([["logs", <ExecutionLogsTab />], ["vars", <VariablesTab />], ["costs", <CostsTab />], ["latency", <LatencyTab />], ["metrics", <MetricsTab />], ["events", <EventsTab />]] as const).map(
+              <ScrollArea className="flex-1 min-h-0">
+                  {([["vars", <VarsTab />], ["metrics", <MetricsTab />]] as const).map(
                     ([value, tab]) => (
                       <TabsContent key={value} value={value} className="m-0 px-3 py-2">
                         <motion.div
@@ -98,82 +81,10 @@ export function RightPanel() {
                   )}
               </ScrollArea>
             </Tabs>
+            </div>
           </motion.aside>
         )}
       </AnimatePresence>
     </>
   );
-}
-
-/** Shared empty state — replaces the old hardcoded mock data. */
-function EmptyTab() {
-  return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <p className="text-xs text-muted-foreground">
-        Data will appear here during council runs
-      </p>
-    </div>
-  );
-}
-
-function ExecutionLogsTab() {
-  return <EmptyTab />;
-}
-
-function VariablesTab() {
-  const { members, judgeModel, judgeProvider, isRunning } = useAppStore(
-    useShallow((s) => ({
-      members: s.members,
-      judgeModel: s.judgeModel,
-      judgeProvider: s.judgeProvider,
-      isRunning: s.isRunning,
-    }))
-  );
-
-  const enabled = members.filter((m) => m.enabled);
-  const temps = enabled.map((m) => m.temperature);
-  const tokens = enabled.map((m) => m.maxTokens);
-  const range = (vals: number[]) =>
-    vals.length === 0
-      ? "—"
-      : Math.min(...vals) === Math.max(...vals)
-        ? String(vals[0])
-        : `${Math.min(...vals)}–${Math.max(...vals)}`;
-
-  const vars = [
-    { key: "judge_model", value: judgeModel || "not configured" },
-    { key: "judge_provider", value: judgeProvider },
-    { key: "concurrency", value: String(enabled.length) },
-    { key: "temperature", value: range(temps) },
-    { key: "max_tokens", value: range(tokens) },
-    { key: "run_status", value: isRunning ? "running" : "idle" },
-  ];
-
-  return (
-    <div className="space-y-2 text-xs">
-      <div className="text-muted-foreground mb-2">Session Variables</div>
-      {vars.map((v) => (
-        <div key={v.key} className="flex items-center justify-between rounded-lg bg-muted/50 px-2.5 py-1.5">
-          <span className="font-mono text-muted-foreground">{v.key}</span>
-          <span className="font-mono font-medium text-foreground">{v.value}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function CostsTab() {
-  return <EmptyTab />;
-}
-
-function LatencyTab() {
-  return <EmptyTab />;
-}
-
-function MetricsTab() {
-  return <EmptyTab />;
-}
-
-function EventsTab() {
-  return <EmptyTab />;
 }
