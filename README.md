@@ -1,6 +1,6 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="public/councilStudio_logo_dark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="councilStudio/public/councilStudio_logo_dark.svg">
     <img src="public/councilStudio_logo.svg" alt="Council Studio logo" width="96" height="96">
   </picture>
 </p>
