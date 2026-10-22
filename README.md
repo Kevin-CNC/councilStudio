@@ -1,8 +1,3 @@
-<p align="center">
-  <picture>
-    <img src="councilStudio/councilStudio/public/councilStudio_logo.svg" alt="Council Studio logo" width="96" height="96">
-  </picture>
-</p>
 
 # Council Studio
 
